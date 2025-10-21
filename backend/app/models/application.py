@@ -19,6 +19,7 @@ class ApplicationSection(Base):
     order_index = Column(Integer, nullable=False)
     is_active = Column(Boolean, default=True, server_default="true")
     visible_before_acceptance = Column(Boolean, default=True, server_default="true")
+    show_when_status = Column(String(20), nullable=True)  # 'accepted', 'paid', or NULL for always visible
     created_at = Column(DateTime(timezone=True), server_default=text("NOW()"))
     updated_at = Column(DateTime(timezone=True), server_default=text("NOW()"), onupdate=text("NOW()"))
 
@@ -46,6 +47,10 @@ class ApplicationQuestion(Base):
     help_text = Column(Text)
     placeholder = Column(Text)
     is_active = Column(Boolean, default=True, server_default="true")
+    show_when_status = Column(String(20), nullable=True)  # 'accepted', 'paid', or NULL for always visible
+    template_file_id = Column(UUID(as_uuid=True), ForeignKey("files.id", ondelete="SET NULL"), nullable=True)  # Optional template file to download
+    show_if_question_id = Column(UUID(as_uuid=True), ForeignKey("application_questions.id", ondelete="CASCADE"), nullable=True)  # Show only if this question has specific answer
+    show_if_answer = Column(Text, nullable=True)  # The answer value that triggers showing this question
     created_at = Column(DateTime(timezone=True), server_default=text("NOW()"))
     updated_at = Column(DateTime(timezone=True), server_default=text("NOW()"), onupdate=text("NOW()"))
 

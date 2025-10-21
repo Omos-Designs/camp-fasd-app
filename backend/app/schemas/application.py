@@ -14,6 +14,7 @@ class ApplicationSectionBase(BaseModel):
     order_index: int
     is_active: bool = True
     visible_before_acceptance: bool = True
+    show_when_status: Optional[str] = None
 
 
 class ApplicationSection(ApplicationSectionBase):
@@ -38,6 +39,7 @@ class ApplicationQuestionBase(BaseModel):
     help_text: Optional[str] = None
     placeholder: Optional[str] = None
     is_active: bool = True
+    show_when_status: Optional[str] = None
 
 
 class ApplicationQuestion(ApplicationQuestionBase):

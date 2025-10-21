@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/contexts/AuthContext'
 import { getAllApplications, ApplicationWithUser } from '@/lib/api-admin'
+import { acceptApplication } from '@/lib/api-admin-actions'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { formatDateCST } from '@/lib/date-utils'
@@ -17,6 +18,7 @@ export default function AdminApplicationsPage() {
   const router = useRouter()
   const { token, user, logout } = useAuth()
   const [applications, setApplications] = useState<ApplicationWithUser[]>([])
+  const [allApplications, setAllApplications] = useState<ApplicationWithUser[]>([]) // For stats (unfiltered)
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<string>('')
   const [searchTerm, setSearchTerm] = useState<string>('')
@@ -30,7 +32,23 @@ export default function AdminApplicationsPage() {
     }
   }, [user, router])
 
-  // Load applications
+  // Load ALL applications once (for stats cards)
+  useEffect(() => {
+    if (!token) return
+
+    const loadAllApplications = async () => {
+      try {
+        const data = await getAllApplications(token)
+        setAllApplications(data)
+      } catch (err) {
+        console.error('Failed to load all applications for stats:', err)
+      }
+    }
+
+    loadAllApplications()
+  }, [token])
+
+  // Load filtered applications (for table)
   useEffect(() => {
     if (!token) return
 
@@ -72,6 +90,31 @@ export default function AdminApplicationsPage() {
     return status.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
   }
 
+  const handleAcceptApplication = async (applicationId: string) => {
+    if (!token) return
+
+    if (!confirm('Are you sure you want to accept this application? This will notify the family and enable conditional post-acceptance sections.')) {
+      return
+    }
+
+    try {
+      await acceptApplication(token, applicationId)
+
+      // Refresh both lists
+      const [allData, filteredData] = await Promise.all([
+        getAllApplications(token),
+        getAllApplications(token, statusFilter || undefined, searchTerm || undefined)
+      ])
+      setAllApplications(allData)
+      setApplications(filteredData)
+
+      alert('Application accepted successfully!')
+    } catch (err) {
+      console.error('Failed to accept application:', err)
+      alert(err instanceof Error ? err.message : 'Failed to accept application')
+    }
+  }
+
   if (loading && applications.length === 0) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -106,6 +149,28 @@ export default function AdminApplicationsPage() {
 
             {/* Right: User Info and Logout */}
             <div className="flex items-center space-x-4">
+              {/* Super Admin Dashboard Selector */}
+              {user?.role === 'super_admin' && (
+                <div className="flex items-center gap-2 mr-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => router.push('/super-admin')}
+                    className="text-xs"
+                  >
+                    Super Admin
+                  </Button>
+                  <span className="text-gray-300">|</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => router.push('/dashboard')}
+                    className="text-xs"
+                  >
+                    Family View
+                  </Button>
+                </div>
+              )}
               <div className="text-right hidden sm:block">
                 <p className="text-sm font-medium text-camp-charcoal">
                   {user?.first_name} {user?.last_name}
@@ -134,14 +199,15 @@ export default function AdminApplicationsPage() {
           <p className="text-gray-600">Here's an overview of all applications for this season.</p>
         </div>
 
-        {/* Stats Cards */}
+        {/* Stats Cards - ORDER: Total, In Progress, Under Review, Accepted */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          {/* 1. Total Applications */}
           <Card className="border-l-4 border-l-camp-green hover:shadow-lg transition-shadow">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600 mb-1">Total Applications</p>
-                  <p className="text-3xl font-bold text-camp-charcoal">{applications.length}</p>
+                  <p className="text-3xl font-bold text-camp-charcoal">{allApplications.length}</p>
                 </div>
                 <div className="w-12 h-12 bg-camp-green/10 rounded-lg flex items-center justify-center">
                   <svg className="w-6 h-6 text-camp-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -152,13 +218,33 @@ export default function AdminApplicationsPage() {
             </CardContent>
           </Card>
 
+          {/* 2. In Progress */}
+          <Card className="border-l-4 border-l-blue-500 hover:shadow-lg transition-shadow">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600 mb-1">In Progress</p>
+                  <p className="text-3xl font-bold text-blue-600">
+                    {allApplications.filter(a => a.status === 'in_progress').length}
+                  </p>
+                </div>
+                <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                  <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 3. Under Review */}
           <Card className="border-l-4 border-l-yellow-500 hover:shadow-lg transition-shadow">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600 mb-1">Under Review</p>
                   <p className="text-3xl font-bold text-yellow-600">
-                    {applications.filter(a => a.status === 'under_review').length}
+                    {allApplications.filter(a => a.status === 'under_review').length}
                   </p>
                 </div>
                 <div className="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center">
@@ -170,36 +256,19 @@ export default function AdminApplicationsPage() {
             </CardContent>
           </Card>
 
+          {/* 4. Accepted */}
           <Card className="border-l-4 border-l-green-500 hover:shadow-lg transition-shadow">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600 mb-1">Approved</p>
+                  <p className="text-sm font-medium text-gray-600 mb-1">Accepted</p>
                   <p className="text-3xl font-bold text-green-600">
-                    {applications.filter(a => a.status === 'accepted').length}
+                    {allApplications.filter(a => a.status === 'accepted').length}
                   </p>
                 </div>
                 <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
                   <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-l-4 border-l-blue-500 hover:shadow-lg transition-shadow">
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600 mb-1">In Progress</p>
-                  <p className="text-3xl font-bold text-blue-600">
-                    {applications.filter(a => a.status === 'in_progress').length}
-                  </p>
-                </div>
-                <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                  <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                   </svg>
                 </div>
               </div>
@@ -254,7 +323,7 @@ export default function AdminApplicationsPage() {
                   <option value="">All Statuses</option>
                   <option value="in_progress">In Progress</option>
                   <option value="under_review">Under Review</option>
-                  <option value="accepted">Approved</option>
+                  <option value="accepted">Accepted</option>
                   <option value="declined">Declined</option>
                   <option value="paid">Paid</option>
                 </select>
@@ -379,14 +448,26 @@ export default function AdminApplicationsPage() {
                             >
                               👁️ View
                             </Button>
-                            <Button
-                              variant="primary"
-                              size="sm"
-                              disabled={(app.approval_count || 0) < 3}
-                              className="font-medium whitespace-nowrap"
-                            >
-                              ✓ Accept
-                            </Button>
+                            {app.status === 'accepted' || app.status === 'paid' ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled
+                                className="font-medium whitespace-nowrap bg-green-50 text-green-700 border-green-200"
+                              >
+                                ✓ Accepted
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="primary"
+                                size="sm"
+                                disabled={(app.approval_count || 0) < 3 || app.status !== 'under_review'}
+                                onClick={() => handleAcceptApplication(app.id)}
+                                className="font-medium whitespace-nowrap"
+                              >
+                                ✓ Accept
+                              </Button>
+                            )}
                           </div>
                         </td>
                       </tr>

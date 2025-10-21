@@ -79,9 +79,14 @@ export interface ApplicationProgress {
 
 /**
  * Get all application sections with questions
+ * Optionally filter by application status (for conditional questions)
  */
-export async function getApplicationSections(token: string): Promise<ApplicationSection[]> {
-  const response = await fetch(`${API_URL}/api/applications/sections`, {
+export async function getApplicationSections(token: string, applicationId?: string): Promise<ApplicationSection[]> {
+  const url = applicationId
+    ? `${API_URL}/api/applications/sections?application_id=${applicationId}`
+    : `${API_URL}/api/applications/sections`
+
+  const response = await fetch(url, {
     method: 'GET',
     headers: {
       'Authorization': `Bearer ${token}`,

@@ -23,8 +23,8 @@ export default function DashboardPage() {
     if (!loading && !isAuthenticated) {
       router.push('/login')
     }
-    // Redirect admins to admin dashboard
-    if (!loading && user && (user.role === 'admin' || user.role === 'super_admin')) {
+    // Redirect regular admins to admin dashboard (super admins can access any dashboard)
+    if (!loading && user && user.role === 'admin') {
       router.push('/admin/applications')
     }
   }, [isAuthenticated, loading, user, router])
@@ -112,7 +112,28 @@ export default function DashboardPage() {
               </p>
               <p className="text-xs text-gray-500 capitalize">{user.role}</p>
             </div>
-            {(user.role === 'admin' || user.role === 'super_admin') && (
+            {user.role === 'super_admin' && (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => router.push('/super-admin')}
+                  className="text-xs"
+                >
+                  Super Admin
+                </Button>
+                <span className="text-gray-300">|</span>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => router.push('/admin/applications')}
+                  className="text-xs"
+                >
+                  Admin Dashboard
+                </Button>
+              </div>
+            )}
+            {user.role === 'admin' && (
               <Button
                 variant="primary"
                 size="sm"
@@ -139,6 +160,44 @@ export default function DashboardPage() {
             Manage your camper application and track your progress.
           </p>
         </div>
+
+        {/* Acceptance Notification Banner */}
+        {applications.length > 0 &&
+         applications[0].status === 'accepted' &&
+         applications[0].completion_percentage < 100 && (
+          <div className="mb-8 bg-gradient-to-r from-green-50 to-emerald-50 border-l-4 border-green-500 p-6 rounded-lg shadow-md">
+            <div className="flex items-start">
+              <div className="flex-shrink-0">
+                <svg className="h-8 w-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div className="ml-4 flex-1">
+                <h3 className="text-lg font-bold text-green-800 mb-2">
+                  🎉 Congratulations! Your Application Has Been Accepted!
+                </h3>
+                <p className="text-green-700 mb-3">
+                  We're excited to welcome your camper to CAMP FASD! We need a few more details to complete your registration.
+                </p>
+                <div className="bg-white border border-green-200 rounded-lg p-4 mb-3">
+                  <p className="text-sm font-semibold text-green-800 mb-2">New sections added:</p>
+                  <ul className="text-sm text-green-700 space-y-1 ml-4">
+                    <li>• Travel arrangements and pickup information</li>
+                    <li>• T-shirt size and dietary restrictions</li>
+                    <li>• Emergency contact information during camp</li>
+                  </ul>
+                </div>
+                <Button
+                  variant="primary"
+                  onClick={() => router.push(`/dashboard/application/${applications[0].id}`)}
+                  className="bg-green-600 hover:bg-green-700 text-white font-semibold"
+                >
+                  Complete Registration Now →
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Quick Stats */}
         <div className="grid md:grid-cols-3 gap-6 mb-8">
@@ -187,9 +246,17 @@ export default function DashboardPage() {
             <CardContent>
               {applications.length > 0 ? (
                 <>
-                  <p className="text-sm font-medium text-camp-charcoal">Continue Application</p>
+                  <p className="text-sm font-medium text-camp-charcoal">
+                    {applications[0].status === 'accepted' && applications[0].completion_percentage < 100
+                      ? 'Continue Registration'
+                      : applications[0].status === 'under_review' || applications[0].completion_percentage === 100
+                      ? 'Edit Application'
+                      : 'Continue Application'}
+                  </p>
                   <p className="text-sm text-gray-600 mt-1">
-                    {applications[0].completion_percentage < 100
+                    {applications[0].status === 'accepted' && applications[0].completion_percentage < 100
+                      ? 'Complete post-acceptance sections'
+                      : applications[0].completion_percentage < 100
                       ? 'Complete remaining sections'
                       : 'Application complete'}
                   </p>
@@ -240,7 +307,11 @@ export default function DashboardPage() {
                     Creating...
                   </>
                 ) : applications.length > 0 ? (
-                  'Continue Application'
+                  applications[0].status === 'accepted' && applications[0].completion_percentage < 100
+                    ? 'Continue Registration'
+                    : applications[0].status === 'under_review' || applications[0].completion_percentage === 100
+                    ? 'Edit Application'
+                    : 'Continue Application'
                 ) : (
                   'Start New Application'
                 )}

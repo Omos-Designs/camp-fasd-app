@@ -34,17 +34,63 @@ router = APIRouter()
 
 @router.get("/sections", response_model=List[ApplicationSectionWithQuestions])
 async def get_application_sections(
+    application_id: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
     Get all active application sections with their questions
 
+    Optionally filters sections/questions based on application status for conditional display.
+    Pass application_id to get sections relevant to that application's current status.
+
     Returns sections in order with all active questions
     """
-    sections = db.query(ApplicationSection).filter(
+    # Get application status if application_id provided
+    app_status = None
+    if application_id:
+        application = db.query(Application).filter(
+            Application.id == application_id,
+            Application.user_id == current_user.id
+        ).first()
+        if application:
+            app_status = application.status
+
+    # Build query for sections
+    sections_query = db.query(ApplicationSection).filter(
         ApplicationSection.is_active == True
-    ).order_by(ApplicationSection.order_index).all()
+    )
+
+    # Filter sections by status if applicable
+    if app_status:
+        # Show sections that have no status requirement OR match the current status
+        sections_query = sections_query.filter(
+            (ApplicationSection.show_when_status == None) |
+            (ApplicationSection.show_when_status == app_status)
+        )
+    else:
+        # If no application or status, only show sections with no status requirement
+        sections_query = sections_query.filter(
+            ApplicationSection.show_when_status == None
+        )
+
+    sections = sections_query.order_by(ApplicationSection.order_index).all()
+
+    # Filter questions within each section
+    if app_status:
+        for section in sections:
+            # Filter questions to only show those matching the status
+            section.questions = [
+                q for q in section.questions
+                if q.is_active and (q.show_when_status is None or q.show_when_status == app_status)
+            ]
+    else:
+        for section in sections:
+            # Only show questions with no status requirement
+            section.questions = [
+                q for q in section.questions
+                if q.is_active and q.show_when_status is None
+            ]
 
     return sections
 
@@ -302,35 +348,84 @@ async def get_application_progress(
             detail="Application not found"
         )
 
-    # Get all sections
-    sections = db.query(ApplicationSection).filter(
+    # Get application status for conditional filtering
+    app_status = application.status
+
+    # Get sections filtered by status
+    sections_query = db.query(ApplicationSection).filter(
         ApplicationSection.is_active == True
-    ).order_by(ApplicationSection.order_index).all()
+    )
+
+    # Filter sections by status
+    if app_status:
+        sections_query = sections_query.filter(
+            (ApplicationSection.show_when_status == None) |
+            (ApplicationSection.show_when_status == app_status)
+        )
+    else:
+        sections_query = sections_query.filter(
+            ApplicationSection.show_when_status == None
+        )
+
+    sections = sections_query.order_by(ApplicationSection.order_index).all()
+
+    # Get all responses for this application (we need these to evaluate conditional logic)
+    all_responses = db.query(ApplicationResponse).filter(
+        ApplicationResponse.application_id == application_id
+    ).all()
+
+    # Create a dict of question_id -> response_value for quick lookup
+    response_dict = {str(r.question_id): r.response_value for r in all_responses}
+
+    # Helper function to check if a question should be shown based on conditional logic
+    def should_show_question(question: ApplicationQuestion) -> bool:
+        # If no conditional logic, always show
+        if not question.show_if_question_id or not question.show_if_answer:
+            return True
+
+        # Get the trigger question's response
+        trigger_response = response_dict.get(str(question.show_if_question_id))
+
+        # Show the question only if the trigger response matches the expected answer
+        return trigger_response == question.show_if_answer
 
     section_progress_list = []
     completed_sections = 0
 
     for section in sections:
-        # Get questions for this section
-        questions = db.query(ApplicationQuestion).filter(
+        # Get questions for this section, filtered by status
+        questions_query = db.query(ApplicationQuestion).filter(
             ApplicationQuestion.section_id == section.id,
             ApplicationQuestion.is_active == True
-        ).all()
+        )
 
-        total_questions = len(questions)
-        required_questions = sum(1 for q in questions if q.is_required)
+        # Filter questions by status
+        if app_status:
+            questions_query = questions_query.filter(
+                (ApplicationQuestion.show_when_status == None) |
+                (ApplicationQuestion.show_when_status == app_status)
+            )
+        else:
+            questions_query = questions_query.filter(
+                ApplicationQuestion.show_when_status == None
+            )
 
-        # Get responses for this section's questions
-        question_ids = [q.id for q in questions]
-        responses = db.query(ApplicationResponse).filter(
-            ApplicationResponse.application_id == application_id,
-            ApplicationResponse.question_id.in_(question_ids)
-        ).all()
+        questions = questions_query.all()
+
+        # Filter questions by conditional logic
+        visible_questions = [q for q in questions if should_show_question(q)]
+
+        total_questions = len(visible_questions)
+        required_questions = sum(1 for q in visible_questions if q.is_required)
+
+        # Get responses for visible questions only
+        visible_question_ids = [q.id for q in visible_questions]
+        responses = [r for r in all_responses if r.question_id in visible_question_ids]
 
         answered_questions = len(responses)
         answered_required = sum(
             1 for r in responses
-            if any(q.id == r.question_id and q.is_required for q in questions)
+            if any(q.id == r.question_id and q.is_required for q in visible_questions)
         )
 
         # Calculate section completion
@@ -371,25 +466,57 @@ async def get_application_progress(
 def calculate_completion_percentage(db: Session, application_id: str) -> int:
     """
     Calculate the completion percentage for an application
-    Based on required questions answered
+    Based on required questions answered, filtered by:
+    1. Application status (show_when_status)
+    2. Conditional logic (show_if_question_id and show_if_answer)
     """
-    # Get total required questions
-    total_required = db.query(func.count(ApplicationQuestion.id)).filter(
+    # Get the application to check its status
+    application = db.query(Application).filter(Application.id == application_id).first()
+    if not application:
+        return 0
+
+    app_status = application.status
+
+    # Get all required questions that match the status filter
+    required_questions = db.query(ApplicationQuestion).filter(
         ApplicationQuestion.is_required == True,
-        ApplicationQuestion.is_active == True
-    ).scalar()
+        ApplicationQuestion.is_active == True,
+        (ApplicationQuestion.show_when_status == None) | (ApplicationQuestion.show_when_status == app_status)
+    ).all()
+
+    if not required_questions:
+        return 100
+
+    # Get all responses for this application (we need these to evaluate conditional logic)
+    responses = db.query(ApplicationResponse).filter(
+        ApplicationResponse.application_id == application_id
+    ).all()
+
+    # Create a dict of question_id -> response_value for quick lookup
+    response_dict = {str(r.question_id): r.response_value for r in responses}
+
+    # Helper function to check if a question should be shown based on conditional logic
+    def should_show_question(question: ApplicationQuestion) -> bool:
+        # If no conditional logic, always show
+        if not question.show_if_question_id or not question.show_if_answer:
+            return True
+
+        # Get the trigger question's response
+        trigger_response = response_dict.get(str(question.show_if_question_id))
+
+        # Show the question only if the trigger response matches the expected answer
+        return trigger_response == question.show_if_answer
+
+    # Count required questions that should actually be visible
+    total_required = sum(1 for q in required_questions if should_show_question(q))
 
     if total_required == 0:
         return 100
 
-    # Get answered required questions
-    answered = db.query(func.count(ApplicationResponse.id)).join(
-        ApplicationQuestion,
-        ApplicationResponse.question_id == ApplicationQuestion.id
-    ).filter(
-        ApplicationResponse.application_id == application_id,
-        ApplicationQuestion.is_required == True,
-        ApplicationQuestion.is_active == True
-    ).scalar()
+    # Count answered required questions (only those that should be visible)
+    answered_required = sum(
+        1 for q in required_questions
+        if should_show_question(q) and str(q.id) in response_dict
+    )
 
-    return int((answered / total_required) * 100)
+    return int((answered_required / total_required) * 100)

@@ -28,7 +28,7 @@ interface ApplicationData {
   created_at: string
   updated_at: string
   completed_at?: string
-  responses: Array<{
+  responses?: Array<{
     id: string
     question_id: string
     response_value?: string
@@ -45,6 +45,7 @@ export default function AdminApplicationDetailPage() {
   const [application, setApplication] = useState<ApplicationData | null>(null)
   const [sections, setSections] = useState<ApplicationSection[]>([])
   const [files, setFiles] = useState<Record<string, FileInfo>>({})
+  const [fileErrors, setFileErrors] = useState<Record<string, string>>({})
   const [notes, setNotes] = useState<AdminNote[]>([])
   const [approvalStatus, setApprovalStatus] = useState<{
     approval_count: number
@@ -92,26 +93,39 @@ export default function AdminApplicationDetailPage() {
 
         // Load file information for responses with file_id
         const filesMap: Record<string, FileInfo> = {}
-        const responsesWithFiles = appData.responses.filter(r => r.file_id)
+        const errorsMap: Record<string, string> = {}
+
+        // Find responses with files (either in file_id or response_value that looks like a UUID)
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+        const responsesWithFiles = (appData.responses || []).filter(r => {
+          return r.file_id || (r.response_value && uuidRegex.test(r.response_value))
+        })
 
         console.log(`Loading ${responsesWithFiles.length} files...`, responsesWithFiles)
 
         // Load files sequentially to avoid overwhelming the server
         for (const r of responsesWithFiles) {
           try {
-            console.log(`Loading file ${r.file_id} for question ${r.question_id}`)
-            const fileInfo = await getFile(token, String(r.file_id))
+            // Get file ID from either file_id field or response_value (legacy)
+            const fileId = r.file_id || r.response_value
+            if (!fileId) continue
+
+            console.log(`Loading file ${fileId} for question ${r.question_id}`)
+            const fileInfo = await getFile(token, String(fileId))
             console.log(`File loaded:`, fileInfo)
             filesMap[r.question_id] = fileInfo
             // Update state as each file loads so they appear progressively
             setFiles({ ...filesMap })
           } catch (err) {
-            console.error(`Failed to load file ${r.file_id} for question ${r.question_id}:`, err)
-            // Don't block other files from loading
+            const fileId = r.file_id || r.response_value
+            console.error(`Failed to load file ${fileId} for question ${r.question_id}:`, err)
+            errorsMap[r.question_id] = err instanceof Error ? err.message : 'Failed to load file'
+            setFileErrors({ ...errorsMap })
           }
         }
 
         console.log('All files loaded:', filesMap)
+        console.log('File errors:', errorsMap)
       } catch (err) {
         console.error('Failed to load application:', err)
         setError(err instanceof Error ? err.message : 'Failed to load application')
@@ -240,16 +254,35 @@ export default function AdminApplicationDetailPage() {
   }
 
   const getResponseValue = (questionId: string) => {
-    const response = application?.responses.find(r => r.question_id === questionId)
+    const response = application?.responses?.find(r => r.question_id === questionId)
     if (!response) return null
 
     console.log(`Getting response for question ${questionId}:`, response)
 
-    // Check if this is a file response
-    if (response.file_id) {
+    // Check if this is a file response (check file_id OR if response_value looks like a UUID)
+    const isFileId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(response.response_value || '')
+    if (response.file_id || isFileId) {
       const file = files[questionId]
+      const fileError = fileErrors[questionId]
       console.log(`File for question ${questionId}:`, file)
+      console.log(`File error for question ${questionId}:`, fileError)
 
+      // Show error if file failed to load
+      if (fileError) {
+        return (
+          <div className="flex items-center gap-2 text-red-600 bg-red-50 px-3 py-2 rounded">
+            <svg className="h-5 w-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div className="flex-1">
+              <p className="text-sm font-medium">Failed to load file</p>
+              <p className="text-xs text-red-500 mt-0.5">{fileError}</p>
+            </div>
+          </div>
+        )
+      }
+
+      // Show loading if file not yet loaded
       if (!file) {
         return (
           <div className="flex items-center gap-2 text-gray-500">
@@ -257,7 +290,7 @@ export default function AdminApplicationDetailPage() {
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
             </svg>
-            <span className="text-sm">Loading file... (ID: {String(response.file_id)})</span>
+            <span className="text-sm">Loading file...</span>
           </div>
         )
       }
@@ -561,7 +594,7 @@ export default function AdminApplicationDetailPage() {
                                   {question.question_type !== 'file' && (
                                     <button
                                       onClick={() => {
-                                        const response = application?.responses.find(r => r.question_id === question.id)
+                                        const response = application?.responses?.find(r => r.question_id === question.id)
                                         handleStartEdit(question.id, response?.response_value || '')
                                       }}
                                       className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-50"
@@ -662,7 +695,7 @@ export default function AdminApplicationDetailPage() {
                 <div className="w-full bg-gray-200 rounded-full h-3 mb-4">
                   <div
                     className="bg-green-600 h-3 rounded-full transition-all"
-                    style={{ width: `${(approvalStatus.approval_count / 3) * 100}%` }}
+                    style={{ width: `${Math.min((approvalStatus.approval_count / 3) * 100, 100)}%` }}
                   />
                 </div>
 

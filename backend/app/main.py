@@ -42,12 +42,14 @@ async def health_check():
     }
 
 # Import and include routers
-from app.api import auth, applications, files, admin
+from app.api import auth, applications, files, admin, super_admin, application_builder
 
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(applications.router, prefix="/api/applications", tags=["Applications"])
 app.include_router(files.router, tags=["Files"])
 app.include_router(admin.router, prefix="/api", tags=["Admin"])
+app.include_router(application_builder.router, prefix="/api", tags=["Application Builder"])
+app.include_router(super_admin.router, prefix="/api/super-admin", tags=["Super Admin"])
 
 if __name__ == "__main__":
     import uvicorn

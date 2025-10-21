@@ -113,6 +113,7 @@ async def upload_file(
         if response:
             # Update existing response with file_id
             response.file_id = file_record.id
+            response.response_value = None  # Clear text value when file is uploaded
         else:
             # Create new response with file
             response = ApplicationResponse(

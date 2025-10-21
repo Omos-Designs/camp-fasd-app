@@ -20,6 +20,7 @@ import {
 import { uploadFile, deleteFile, getFile, FileInfo } from '@/lib/api-files'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import ProfileHeader from '@/components/ProfileHeader'
 
 export default function ApplicationWizardPage() {
   const params = useParams()
@@ -36,6 +37,10 @@ export default function ApplicationWizardPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [error, setError] = useState<string>('')
+  const [camperFirstName, setCamperFirstName] = useState<string>('')
+  const [camperLastName, setCamperLastName] = useState<string>('')
+  const [profilePictureUrl, setProfilePictureUrl] = useState<string>('')
 
   // Load sections, progress, and existing responses
   useEffect(() => {
@@ -43,11 +48,28 @@ export default function ApplicationWizardPage() {
 
     const loadData = async () => {
       try {
+        console.log('Loading application data...', { token: !!token, applicationId })
+
         const [sectionsData, progressData, applicationData] = await Promise.all([
-          getApplicationSections(token),
-          getApplicationProgress(token, applicationId),
-          getApplication(token, applicationId)
+          getApplicationSections(token, applicationId).catch(err => {
+            console.error('Failed to load sections:', err)
+            throw new Error(`Failed to load sections: ${err.message}`)
+          }),
+          getApplicationProgress(token, applicationId).catch(err => {
+            console.error('Failed to load progress:', err)
+            throw new Error(`Failed to load progress: ${err.message}`)
+          }),
+          getApplication(token, applicationId).catch(err => {
+            console.error('Failed to load application:', err)
+            throw new Error(`Failed to load application: ${err.message}`)
+          })
         ])
+
+        console.log('Data loaded successfully:', {
+          sectionsCount: sectionsData.length,
+          progressData,
+          applicationStatus: applicationData.status
+        })
         setSections(sectionsData)
         setProgress(progressData)
 
@@ -101,8 +123,36 @@ export default function ApplicationWizardPage() {
 
         setResponses(responsesMap)
         setUploadedFiles(filesMap)
-      } catch (error) {
-        console.error('Failed to load application data:', error)
+
+        // Extract camper name and profile picture for ProfileHeader
+        sectionsData.forEach(section => {
+          section.questions.forEach(question => {
+            const questionId = question.id;
+            const response = responsesMap[questionId];
+
+            // Look for first name (case-insensitive)
+            if (question.question_text.toLowerCase().includes('first name') &&
+                question.question_text.toLowerCase().includes('camper') &&
+                response) {
+              setCamperFirstName(response);
+            }
+
+            // Look for last name (case-insensitive)
+            if (question.question_text.toLowerCase().includes('last name') &&
+                question.question_text.toLowerCase().includes('camper') &&
+                response) {
+              setCamperLastName(response);
+            }
+
+            // Look for profile picture
+            if (question.question_type === 'profile_picture' && filesMap[questionId]) {
+              setProfilePictureUrl(filesMap[questionId].url);
+            }
+          });
+        });
+      } catch (err) {
+        console.error('Failed to load application data:', err)
+        setError(err instanceof Error ? err.message : 'Failed to load application')
       } finally {
         setLoading(false)
       }
@@ -172,6 +222,12 @@ export default function ApplicationWizardPage() {
         [questionId]: result.file_id
       }))
 
+      // If this is a profile picture, update the profile picture URL
+      const question = sections.flatMap(s => s.questions).find(q => q.id === questionId);
+      if (question?.question_type === 'profile_picture') {
+        setProfilePictureUrl(result.url);
+      }
+
       // Refresh progress
       const progressData = await getApplicationProgress(token, applicationId)
       setProgress(progressData)
@@ -206,6 +262,12 @@ export default function ApplicationWizardPage() {
         return newState
       })
 
+      // If this was a profile picture, clear the profile picture URL
+      const question = sections.flatMap(s => s.questions).find(q => q.id === questionId);
+      if (question?.question_type === 'profile_picture') {
+        setProfilePictureUrl('');
+      }
+
       // Refresh progress
       const progressData = await getApplicationProgress(token, applicationId)
       setProgress(progressData)
@@ -220,6 +282,20 @@ export default function ApplicationWizardPage() {
       ...prev,
       [questionId]: value
     }))
+
+    // Update camper name in real-time if this is a name question
+    const question = sections.flatMap(s => s.questions).find(q => q.id === questionId);
+    if (question) {
+      const questionText = question.question_text.toLowerCase();
+
+      if (questionText.includes('first name') && questionText.includes('camper')) {
+        setCamperFirstName(value);
+      }
+
+      if (questionText.includes('last name') && questionText.includes('camper')) {
+        setCamperLastName(value);
+      }
+    }
   }
 
   const getProgressEmoji = (sectionId: string) => {
@@ -239,11 +315,48 @@ export default function ApplicationWizardPage() {
     return sectionProgress?.completion_percentage || 0
   }
 
+  // Check if a question should be shown based on conditional logic
+  const shouldShowQuestion = (question: any): boolean => {
+    // If no conditional logic, always show
+    if (!question.show_if_question_id || !question.show_if_answer) {
+      return true;
+    }
+
+    // Get the response to the trigger question
+    const triggerResponse = responses[question.show_if_question_id];
+
+    // Show if the trigger question has the expected answer
+    return triggerResponse === question.show_if_answer;
+  }
+
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-camp-green"></div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+        <Card className="max-w-md w-full">
+          <CardHeader>
+            <CardTitle className="text-red-600">Error</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-gray-700 mb-4">{error}</p>
+            <div className="flex gap-2">
+              <Button onClick={() => window.location.reload()} variant="primary">
+                Try Again
+              </Button>
+              <Button onClick={() => router.push('/dashboard')} variant="outline">
+                Back to Dashboard
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     )
   }
@@ -402,7 +515,14 @@ export default function ApplicationWizardPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6 sm:space-y-8">
-                {currentSection?.questions.map((question, qIndex) => (
+                {/* Profile Header - Shows camper name and photo */}
+                <ProfileHeader
+                  firstName={camperFirstName}
+                  lastName={camperLastName}
+                  profilePictureUrl={profilePictureUrl}
+                />
+
+                {currentSection?.questions.filter(shouldShowQuestion).map((question, qIndex) => (
                   <div key={question.id} className="pb-6 sm:pb-8 border-b border-gray-200 last:border-0">
                     <label className="block text-sm sm:text-base font-medium text-camp-charcoal mb-3">
                       {qIndex + 1}. {question.question_text}
@@ -592,6 +712,101 @@ export default function ApplicationWizardPage() {
                                     </p>
                                     <p className="text-xs text-gray-500 mt-1">
                                       PDF, DOC, DOCX, JPG, PNG (max 10MB)
+                                    </p>
+                                  </>
+                                )}
+                              </div>
+                            </label>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Profile Picture Upload - Image-focused */}
+                    {question.question_type === 'profile_picture' && (
+                      <div className="space-y-4">
+                        {uploadedFiles[question.id] ? (
+                          // Show uploaded profile picture with preview
+                          <div className="border-2 border-camp-green rounded-lg p-6 bg-green-50">
+                            <div className="flex flex-col items-center gap-4">
+                              <img
+                                src={uploadedFiles[question.id].url}
+                                alt="Camper Profile Picture"
+                                className="h-32 w-32 rounded-full object-cover border-4 border-camp-green shadow-lg"
+                              />
+                              <div className="text-center">
+                                <p className="text-sm font-medium text-camp-charcoal">
+                                  {uploadedFiles[question.id].filename}
+                                </p>
+                                <p className="text-xs text-gray-500">
+                                  {(uploadedFiles[question.id].size / 1024).toFixed(1)} KB
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <a
+                                  href={uploadedFiles[question.id].url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-sm text-camp-green hover:underline"
+                                >
+                                  View Full Size
+                                </a>
+                                <span className="text-gray-300">|</span>
+                                <button
+                                  onClick={() => handleFileDelete(question.id)}
+                                  className="text-sm text-red-600 hover:underline"
+                                  type="button"
+                                >
+                                  Change Photo
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          // Show upload area
+                          <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-camp-green transition-colors">
+                            <input
+                              type="file"
+                              accept="image/*,.jpg,.jpeg,.png,.gif"
+                              className="hidden"
+                              id={`profile-pic-${question.id}`}
+                              onChange={(e) => {
+                                const file = e.target.files?.[0]
+                                if (file) {
+                                  handleFileUpload(question.id, file)
+                                }
+                              }}
+                              required={question.is_required && !uploadedFiles[question.id]}
+                            />
+                            <label
+                              htmlFor={`profile-pic-${question.id}`}
+                              className={`cursor-pointer ${uploadingFiles[question.id] ? 'opacity-50' : ''}`}
+                            >
+                              <div className="text-gray-600">
+                                {uploadingFiles[question.id] ? (
+                                  <>
+                                    <svg className="animate-spin mx-auto h-16 w-16 text-camp-green" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                                    </svg>
+                                    <p className="mt-3 text-sm text-camp-green font-medium">Uploading Photo...</p>
+                                  </>
+                                ) : (
+                                  <>
+                                    <div className="mx-auto h-20 w-20 rounded-full bg-gray-200 flex items-center justify-center mb-4">
+                                      <svg className="h-10 w-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                      </svg>
+                                    </div>
+                                    <p className="mt-2 text-base font-medium">
+                                      <span className="text-camp-green">Click to upload photo</span>
+                                      {' '}or drag and drop
+                                    </p>
+                                    <p className="text-sm text-gray-500 mt-2">
+                                      JPG, PNG, or GIF (max 5MB)
+                                    </p>
+                                    <p className="text-xs text-gray-400 mt-1">
+                                      This photo will appear at the top of your application
                                     </p>
                                   </>
                                 )}

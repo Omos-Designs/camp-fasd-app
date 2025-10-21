@@ -205,11 +205,7 @@ async def approve_application(
             ApplicationApproval.approved == True
         ).count()
 
-        # Auto-transition to 'accepted' if 3 approvals reached
-        if approval_count >= 3 and application.status == 'under_review':
-            application.status = 'accepted'
-            application.accepted_at = datetime.now(timezone.utc)
-
+        # NOTE: 3 approvals no longer auto-accept - admin must manually click Accept button
         db.commit()
         db.refresh(application)
 
@@ -218,7 +214,7 @@ async def approve_application(
             "application_id": str(application.id),
             "status": application.status,
             "approval_count": approval_count,
-            "auto_accepted": approval_count >= 3
+            "accept_button_enabled": approval_count >= 3
         }
     except HTTPException:
         raise
@@ -301,6 +297,93 @@ async def decline_application(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error declining application: {str(e)}"
+        )
+
+
+@router.post("/applications/{application_id}/accept")
+async def accept_application(
+    application_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    """
+    Accept an application (manually transition to 'accepted' status)
+    - Requires 3 approvals from 3 different teams
+    - Sets status to 'accepted' and records timestamp
+    - Triggers conditional questions to appear
+    - Sends acceptance email (TODO)
+    Admin/Super Admin only endpoint
+    """
+    try:
+        application = db.query(Application).filter(Application.id == application_id).first()
+        if not application:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Application not found"
+            )
+
+        # Verify application is in under_review status
+        if application.status != 'under_review':
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Application must be 'under_review' to accept. Current status: {application.status}"
+            )
+
+        # Count approvals and verify 3 approvals from different teams
+        approvals = db.query(ApplicationApproval).options(
+            joinedload(ApplicationApproval.admin)
+        ).filter(
+            ApplicationApproval.application_id == application_id,
+            ApplicationApproval.approved == True
+        ).all()
+
+        approval_count = len(approvals)
+        if approval_count < 3:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Application requires 3 approvals. Current approvals: {approval_count}"
+            )
+
+        # Verify approvals are from 3 different teams
+        teams = set(a.admin.team for a in approvals if a.admin and a.admin.team)
+        if len(teams) < 3:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Application requires approvals from 3 different teams. Current teams: {', '.join(teams)}"
+            )
+
+        # Accept the application
+        application.status = 'accepted'
+        application.accepted_at = datetime.now(timezone.utc)
+
+        db.commit()
+        db.refresh(application)
+
+        # Recalculate progress - will now include conditional post-acceptance questions
+        from app.api.applications import calculate_completion_percentage
+        new_progress = calculate_completion_percentage(db, application_id)
+        application.completion_percentage = new_progress
+        db.commit()
+
+        # TODO: Send acceptance email to family
+
+        return {
+            "message": "Application accepted successfully - new sections now available",
+            "application_id": str(application.id),
+            "status": application.status,
+            "accepted_at": application.accepted_at.isoformat(),
+            "approved_by_teams": list(teams),
+            "new_completion_percentage": new_progress
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error accepting application: {str(e)}"
         )
 
 

@@ -275,25 +275,36 @@ CREATE TABLE email_logs (
 - `POST /api/admin/applications/{id}/invoice` - Generate invoice
 - `POST /api/webhooks/stripe` - Stripe webhook handler
 
-### Super Admin
-- `GET /api/admin/sections` - List sections
-- `POST /api/admin/sections` - Create section
-- `PATCH /api/admin/sections/{id}` - Update section
-- `DELETE /api/admin/sections/{id}` - Delete section
-- `GET /api/admin/questions` - List questions
-- `POST /api/admin/questions` - Create question
-- `PATCH /api/admin/questions/{id}` - Update question
-- `DELETE /api/admin/questions/{id}` - Delete question
-- `GET /api/admin/users` - List users
-- `PATCH /api/admin/users/{id}/role` - Update user role
-- `GET /api/admin/config` - Get system config
-- `PATCH /api/admin/config` - Update system config
-- `POST /api/admin/reset-applications` - Reset for new season
-- `GET /api/admin/email-templates` - List email templates
-- `PATCH /api/admin/email-templates/{id}` - Update template
-- `GET /api/admin/assignable-options` - List options
-- `POST /api/admin/assignable-options` - Create option
-- `DELETE /api/admin/assignable-options/{id}` - Delete option
+### Super Admin - Application Builder
+- `GET /api/application-builder/sections` - Get all sections with questions (with inactive filter)
+- `POST /api/application-builder/sections` - Create section
+- `PUT /api/application-builder/sections/{id}` - Update section
+- `DELETE /api/application-builder/sections/{id}` - Delete section (CASCADE deletes questions)
+- `POST /api/application-builder/sections/reorder` - Reorder sections by ID list
+- `POST /api/application-builder/questions` - Create question
+- `PUT /api/application-builder/questions/{id}` - Update question
+- `DELETE /api/application-builder/questions/{id}` - Delete question
+- `POST /api/application-builder/questions/reorder` - Reorder questions by ID list
+
+### Super Admin - Teams & Users (Planned)
+- `GET /api/super-admin/teams` - List teams
+- `POST /api/super-admin/teams` - Create team
+- `PUT /api/super-admin/teams/{id}` - Update team
+- `DELETE /api/super-admin/teams/{id}` - Delete team
+- `GET /api/super-admin/users` - List all users
+- `PUT /api/super-admin/users/{id}` - Update user (role, team, status)
+- `POST /api/super-admin/users/{id}/suspend` - Suspend user
+- `POST /api/super-admin/users/{id}/activate` - Activate user
+
+### Super Admin - Configuration (Planned)
+- `GET /api/super-admin/config` - Get system config
+- `PUT /api/super-admin/config` - Update system config
+- `GET /api/super-admin/email-templates` - List email templates
+- `POST /api/super-admin/email-templates` - Create template
+- `PUT /api/super-admin/email-templates/{id}` - Update template
+- `DELETE /api/super-admin/email-templates/{id}` - Delete template
+- `GET /api/super-admin/audit-logs` - Get audit logs with filters
+- `POST /api/super-admin/audit-logs/export` - Export logs to CSV
 
 ## State Management
 

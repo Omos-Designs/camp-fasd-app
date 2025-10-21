@@ -147,3 +147,32 @@ export async function getApprovalStatus(
 
   return response.json()
 }
+
+/**
+ * Accept an application (manually transition to 'accepted' status)
+ * Requires 3 approvals from 3 different teams
+ */
+export async function acceptApplication(
+  token: string,
+  applicationId: string
+): Promise<{
+  message: string
+  application_id: string
+  status: string
+  accepted_at: string
+  approved_by_teams: string[]
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/admin/applications/${applicationId}/accept`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
+  })
+
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.detail || 'Failed to accept application')
+  }
+
+  return response.json()
+}

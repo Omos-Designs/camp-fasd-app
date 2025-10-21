@@ -88,15 +88,16 @@ camp-fasd-app/
 - Track returning vs new campers
 
 ### Super Admin Tools
-- Dynamically add/edit application sections and questions
-- Configure question types (text, dropdown, multiple choice, file upload)
-- Mark questions as required or optional
-- Set whether questions reset annually
-- Manage email templates and triggers
-- Configure Stripe invoice amounts
-- Apply scholarships and discounts
-- Manage admin-assignable options (cabins, etc.)
-- Reset applications for new camp season
+- **Application Builder**: Dynamically create, edit, and delete application sections and questions
+- **Question Configuration**: Support for 10+ question types (text, dropdown, multiple choice, file upload, signature, etc.)
+- **Conditional Visibility**: Control when sections/questions appear (always, after acceptance, after payment)
+- **Template Files**: Attach downloadable template files to questions (e.g., doctor forms)
+- **Teams Management**: Create and manage teams with granular permissions
+- **User Management**: View, edit, suspend users, assign roles and teams
+- **System Settings**: Configure application window, email notifications, file upload limits, security policies
+- **Email Templates**: Create and edit email templates with variable insertion
+- **Audit Logs**: View system activity with filtering and CSV export
+- **Dashboard**: Overview of system stats, recent activity, and quick actions
 
 ## Application Sections
 
