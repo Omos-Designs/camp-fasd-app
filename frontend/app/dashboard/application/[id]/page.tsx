@@ -17,7 +17,7 @@ import {
   ApplicationProgress,
   ApplicationResponse
 } from '@/lib/api-applications'
-import { uploadFile, deleteFile, getFile, getTemplateFile, FileInfo } from '@/lib/api-files'
+import { uploadFile, deleteFile, getFile, getFilesBatch, getTemplateFile, FileInfo } from '@/lib/api-files'
 import { getMedicationsForQuestion, saveMedicationsForQuestion, getAllergiesForQuestion, saveAllergiesForQuestion } from '@/lib/api-medications'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -91,22 +91,45 @@ export default function ApplicationWizardPage() {
         if (applicationData.responses && applicationData.responses.length > 0) {
           console.log('Loading responses:', applicationData.responses)
 
-          // Load file information for responses with file_id
-          const filePromises = applicationData.responses
-            .filter(r => r.file_id)
-            .map(async (r) => {
-              const fileIdStr = String(r.file_id)
-              const questionIdStr = String(r.question_id)
+          // Collect all file IDs that need to be loaded
+          const fileResponses = applicationData.responses.filter(r => r.file_id)
+          const fileIds = fileResponses.map(r => String(r.file_id))
 
-              try {
-                console.log(`Loading file for question ${questionIdStr}, file_id: ${fileIdStr}`)
-                const fileInfo = await getFile(token, fileIdStr)
-                console.log(`File loaded successfully:`, fileInfo)
-                filesMap[questionIdStr] = fileInfo
-                responsesMap[questionIdStr] = fileIdStr
-              } catch (error) {
-                console.error(`Failed to load file for question ${questionIdStr}, file_id: ${fileIdStr}:`, error)
-                // Create placeholder file info if loading fails
+          // Load all files in a single batch request (much faster!)
+          if (fileIds.length > 0) {
+            try {
+              console.log(`Loading ${fileIds.length} files in batch...`)
+              const fileInfos = await getFilesBatch(token, fileIds)
+              console.log(`Batch loaded ${fileInfos.length} files successfully`)
+
+              // Map file info to question IDs
+              fileResponses.forEach(r => {
+                const fileIdStr = String(r.file_id)
+                const questionIdStr = String(r.question_id)
+                const fileInfo = fileInfos.find(f => f.id === fileIdStr)
+
+                if (fileInfo) {
+                  filesMap[questionIdStr] = fileInfo
+                  responsesMap[questionIdStr] = fileIdStr
+                } else {
+                  // Create placeholder if file not found in batch
+                  filesMap[questionIdStr] = {
+                    id: fileIdStr,
+                    filename: 'Uploaded file',
+                    size: 0,
+                    content_type: 'application/octet-stream',
+                    url: '#',
+                    created_at: new Date().toISOString()
+                  }
+                  responsesMap[questionIdStr] = fileIdStr
+                }
+              })
+            } catch (error) {
+              console.error('Failed to batch load files:', error)
+              // Fallback: create placeholders for all files
+              fileResponses.forEach(r => {
+                const fileIdStr = String(r.file_id)
+                const questionIdStr = String(r.question_id)
                 filesMap[questionIdStr] = {
                   id: fileIdStr,
                   filename: 'Uploaded file',
@@ -116,10 +139,9 @@ export default function ApplicationWizardPage() {
                   created_at: new Date().toISOString()
                 }
                 responsesMap[questionIdStr] = fileIdStr
-              }
-            })
-
-          await Promise.all(filePromises)
+              })
+            }
+          }
 
           // Load text responses
           applicationData.responses.forEach(r => {

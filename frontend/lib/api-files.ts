@@ -71,6 +71,32 @@ export async function getFile(token: string, fileId: string): Promise<FileInfo> 
 }
 
 /**
+ * Get multiple files' information in a single batch request
+ * Much faster than calling getFile() multiple times
+ */
+export async function getFilesBatch(token: string, fileIds: string[]): Promise<FileInfo[]> {
+  if (fileIds.length === 0) {
+    return []
+  }
+
+  const response = await fetch(`${API_URL}/api/files/batch`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(fileIds),
+  })
+
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.detail || 'Failed to get files')
+  }
+
+  return response.json()
+}
+
+/**
  * Delete a file
  */
 export async function deleteFile(token: string, fileId: string): Promise<void> {

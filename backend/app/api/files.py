@@ -253,6 +253,68 @@ async def get_template_file(
         raise HTTPException(status_code=500, detail=f"Failed to get template file: {str(e)}")
 
 
+@router.post("/batch")
+async def get_files_batch(
+    file_ids: List[str],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get multiple files' metadata and download URLs in a single request
+
+    This is much faster than making individual requests for each file.
+    """
+    if not file_ids:
+        return []
+
+    # Get all file records in one query
+    file_records = db.query(FileModel).filter(
+        FileModel.id.in_(file_ids)
+    ).all()
+
+    # Get all associated application IDs
+    app_ids = [f.application_id for f in file_records if f.application_id]
+
+    # Verify user has access to all applications (batch check)
+    if app_ids:
+        user_apps = db.query(Application.id).filter(
+            Application.id.in_(app_ids),
+            Application.user_id == current_user.id
+        ).all()
+        user_app_ids = {str(app.id) for app in user_apps}
+    else:
+        user_app_ids = set()
+
+    results = []
+    for file_record in file_records:
+        # Check authorization
+        if file_record.application_id:
+            if str(file_record.application_id) not in user_app_ids and current_user.role not in ["admin", "super_admin"]:
+                continue  # Skip files user doesn't have access to
+
+        try:
+            # Generate signed URL
+            signed_url = storage_service.get_signed_url(
+                file_record.storage_path,
+                expires_in=3600
+            )
+
+            results.append({
+                "id": str(file_record.id),
+                "filename": file_record.file_name,
+                "size": file_record.file_size,
+                "content_type": file_record.file_type,
+                "url": signed_url,
+                "created_at": file_record.created_at.isoformat()
+            })
+        except Exception as e:
+            # Log error but continue with other files
+            print(f"Failed to get signed URL for file {file_record.id}: {e}")
+            continue
+
+    return results
+
+
 @router.get("/{file_id}")
 async def get_file(
     file_id: str,

@@ -242,7 +242,11 @@ async def get_application(
     """
     Get a specific application with all responses (user must own the application)
     """
-    application = db.query(Application).filter(
+    from sqlalchemy.orm import joinedload
+
+    application = db.query(Application).options(
+        joinedload(Application.responses)
+    ).filter(
         Application.id == application_id,
         Application.user_id == current_user.id
     ).first()
