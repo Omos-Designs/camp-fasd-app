@@ -4,15 +4,15 @@ Manage application sections and questions
 """
 
 from fastapi import APIRouter, Depends, HTTPException
-from typing import List, Optional
+from typing import List, Optional, Union, Dict, Any
 from pydantic import BaseModel
 from uuid import UUID
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, object_session
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.user import User
-from app.models.application import ApplicationSection, ApplicationQuestion
+from app.models.application import ApplicationSection, ApplicationQuestion, ApplicationHeader
 
 router = APIRouter(prefix="/application-builder", tags=["application-builder"])
 
@@ -32,16 +32,19 @@ class QuestionBase(BaseModel):
     question_text: str
     question_type: str
     help_text: Optional[str] = None
+    description: Optional[str] = None
     placeholder: Optional[str] = None
     is_required: bool = False
     is_active: bool = True
     order_index: int
-    options: Optional[List[str]] = None
+    options: Optional[Union[List[str], Dict[str, Any]]] = None
     validation_rules: Optional[QuestionValidationRules] = None
     show_when_status: Optional[str] = None
     template_file_id: Optional[UUID] = None
     show_if_question_id: Optional[UUID] = None
     show_if_answer: Optional[str] = None
+    detail_prompt_trigger: Optional[List[str]] = None
+    detail_prompt_text: Optional[str] = None
 
 
 class QuestionCreate(QuestionBase):
@@ -52,16 +55,19 @@ class QuestionUpdate(BaseModel):
     question_text: Optional[str] = None
     question_type: Optional[str] = None
     help_text: Optional[str] = None
+    description: Optional[str] = None
     placeholder: Optional[str] = None
     is_required: Optional[bool] = None
     is_active: Optional[bool] = None
     order_index: Optional[int] = None
-    options: Optional[List[str]] = None
+    options: Optional[Union[List[str], Dict[str, Any]]] = None
     validation_rules: Optional[QuestionValidationRules] = None
     show_when_status: Optional[str] = None
     template_file_id: Optional[UUID] = None
     show_if_question_id: Optional[UUID] = None
     show_if_answer: Optional[str] = None
+    detail_prompt_trigger: Optional[List[str]] = None
+    detail_prompt_text: Optional[str] = None
 
 
 class QuestionResponse(QuestionBase):
@@ -104,11 +110,51 @@ class SectionWithQuestions(SectionBase):
         from_attributes = True
 
 
+# Header Pydantic Models
+class HeaderBase(BaseModel):
+    header_text: str
+    order_index: int
+    is_active: bool = True
+
+
+class HeaderCreate(HeaderBase):
+    section_id: UUID
+
+
+class HeaderUpdate(BaseModel):
+    header_text: Optional[str] = None
+    order_index: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class HeaderResponse(HeaderBase):
+    id: UUID
+    section_id: UUID
+    created_at: str
+    updated_at: str
+
+    class Config:
+        from_attributes = True
+
+
 # Helper function to check super admin
 def require_super_admin(current_user: User = Depends(get_current_user)):
     if current_user.role != "super_admin":
         raise HTTPException(status_code=403, detail="Super admin access required")
     return current_user
+
+
+def convert_header_to_response(header: ApplicationHeader) -> dict:
+    """Convert SQLAlchemy header model to response dict"""
+    return {
+        "id": str(header.id),
+        "section_id": str(header.section_id),
+        "header_text": header.header_text,
+        "order_index": header.order_index,
+        "is_active": header.is_active,
+        "created_at": header.created_at.isoformat(),
+        "updated_at": header.updated_at.isoformat(),
+    }
 
 
 def convert_section_to_response(section: ApplicationSection) -> dict:
@@ -122,18 +168,35 @@ def convert_section_to_response(section: ApplicationSection) -> dict:
         "show_when_status": section.show_when_status,
         "created_at": section.created_at.isoformat(),
         "updated_at": section.updated_at.isoformat(),
-        "questions": [convert_question_to_response(q) for q in section.questions]
+        "questions": [convert_question_to_response(q) for q in section.questions],
+        "headers": [convert_header_to_response(h) for h in section.headers]
     }
 
 
 def convert_question_to_response(question: ApplicationQuestion) -> dict:
     """Convert SQLAlchemy question model to response dict"""
+    # Get template filename if template_file_id exists
+    from app.models.application import File as FileModel
+
+    template_filename = None
+    if question.template_file_id:
+        try:
+            session = object_session(question)
+            if session:
+                template_file = session.query(FileModel).filter(FileModel.id == question.template_file_id).first()
+                if template_file:
+                    template_filename = template_file.file_name
+        except Exception as e:
+            # Log error but don't fail the response
+            print(f"Error fetching template filename: {e}")
+
     return {
         "id": str(question.id),
         "section_id": str(question.section_id),
         "question_text": question.question_text,
         "question_type": question.question_type,
         "help_text": question.help_text,
+        "description": question.description,
         "placeholder": question.placeholder,
         "is_required": question.is_required,
         "is_active": question.is_active,
@@ -142,8 +205,11 @@ def convert_question_to_response(question: ApplicationQuestion) -> dict:
         "validation_rules": question.validation_rules,
         "show_when_status": question.show_when_status,
         "template_file_id": str(question.template_file_id) if question.template_file_id else None,
+        "template_filename": template_filename,
         "show_if_question_id": str(question.show_if_question_id) if question.show_if_question_id else None,
         "show_if_answer": question.show_if_answer,
+        "detail_prompt_trigger": question.detail_prompt_trigger,
+        "detail_prompt_text": question.detail_prompt_text,
         "created_at": question.created_at.isoformat(),
         "updated_at": question.updated_at.isoformat(),
     }
@@ -301,7 +367,9 @@ async def create_question(
         show_when_status=show_when_status_value,
         template_file_id=question.template_file_id,
         show_if_question_id=question.show_if_question_id,
-        show_if_answer=question.show_if_answer
+        show_if_answer=question.show_if_answer,
+        detail_prompt_trigger=question.detail_prompt_trigger,
+        detail_prompt_text=question.detail_prompt_text
     )
 
     db.add(new_question)
@@ -334,6 +402,8 @@ async def update_question(
         db_question.question_type = question.question_type
     if question.help_text is not None:
         db_question.help_text = question.help_text
+    if question.description is not None:
+        db_question.description = question.description
     if question.placeholder is not None:
         db_question.placeholder = question.placeholder
     if question.is_required is not None:
@@ -358,6 +428,11 @@ async def update_question(
         db_question.show_if_question_id = question.show_if_question_id
     if question.show_if_answer is not None:
         db_question.show_if_answer = question.show_if_answer
+    # Always update detail_prompt fields if provided (even if empty/null)
+    if question.detail_prompt_trigger is not None:
+        db_question.detail_prompt_trigger = question.detail_prompt_trigger if question.detail_prompt_trigger else None
+    if question.detail_prompt_text is not None:
+        db_question.detail_prompt_text = question.detail_prompt_text if question.detail_prompt_text else None
 
     db.commit()
     db.refresh(db_question)
@@ -426,7 +501,9 @@ async def duplicate_question(
         show_when_status=original_question.show_when_status,
         template_file_id=original_question.template_file_id,
         show_if_question_id=original_question.show_if_question_id,
-        show_if_answer=original_question.show_if_answer
+        show_if_answer=original_question.show_if_answer,
+        detail_prompt_trigger=original_question.detail_prompt_trigger,
+        detail_prompt_text=original_question.detail_prompt_text
     )
 
     db.add(duplicated_question)
@@ -472,3 +549,104 @@ async def reorder_questions(
     db.commit()
 
     return {"message": "Questions reordered successfully"}
+
+
+# Header Endpoints
+@router.post("/headers")
+async def create_header(
+    header: HeaderCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_super_admin)
+):
+    """Create a new header in a section"""
+
+    # Verify section exists
+    section = db.query(ApplicationSection).filter(
+        ApplicationSection.id == header.section_id
+    ).first()
+
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+
+    db_header = ApplicationHeader(
+        section_id=header.section_id,
+        header_text=header.header_text,
+        order_index=header.order_index,
+        is_active=header.is_active
+    )
+
+    db.add(db_header)
+    db.commit()
+    db.refresh(db_header)
+
+    return convert_header_to_response(db_header)
+
+
+@router.put("/headers/{header_id}")
+async def update_header(
+    header_id: UUID,
+    header: HeaderUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_super_admin)
+):
+    """Update an existing header"""
+
+    db_header = db.query(ApplicationHeader).filter(
+        ApplicationHeader.id == header_id
+    ).first()
+
+    if not db_header:
+        raise HTTPException(status_code=404, detail="Header not found")
+
+    # Update fields that are provided
+    if header.header_text is not None:
+        db_header.header_text = header.header_text
+    if header.order_index is not None:
+        db_header.order_index = header.order_index
+    if header.is_active is not None:
+        db_header.is_active = header.is_active
+
+    db.commit()
+    db.refresh(db_header)
+
+    return convert_header_to_response(db_header)
+
+
+@router.delete("/headers/{header_id}")
+async def delete_header(
+    header_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_super_admin)
+):
+    """Delete a header"""
+
+    db_header = db.query(ApplicationHeader).filter(
+        ApplicationHeader.id == header_id
+    ).first()
+
+    if not db_header:
+        raise HTTPException(status_code=404, detail="Header not found")
+
+    db.delete(db_header)
+    db.commit()
+
+    return {"message": "Header deleted successfully"}
+
+
+@router.post("/headers/reorder")
+async def reorder_headers(
+    header_ids: List[UUID],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_super_admin)
+):
+    """Reorder headers within a section by providing ordered list of header IDs"""
+
+    # Update order_index for each header
+    for index, header_id in enumerate(header_ids):
+        db.query(ApplicationHeader).filter(
+            ApplicationHeader.id == header_id
+        ).update({"order_index": index})
+
+    db.commit()
+
+    return {"message": "Headers reordered successfully"}

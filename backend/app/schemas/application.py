@@ -37,9 +37,18 @@ class ApplicationQuestionBase(BaseModel):
     order_index: int
     validation_rules: Optional[Any] = None  # Can be array or dict
     help_text: Optional[str] = None
+    description: Optional[str] = None  # Long-form markdown description
     placeholder: Optional[str] = None
     is_active: bool = True
     show_when_status: Optional[str] = None
+    # Conditional logic fields
+    show_if_question_id: Optional[UUID4] = None
+    show_if_answer: Optional[str] = None
+    # Detail prompt fields
+    detail_prompt_trigger: Optional[Any] = None  # Can be string or array
+    detail_prompt_text: Optional[str] = None
+    # Template file field
+    template_file_id: Optional[UUID4] = None
 
 
 class ApplicationQuestion(ApplicationQuestionBase):

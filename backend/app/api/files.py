@@ -22,6 +22,80 @@ from ..core.config import settings
 router = APIRouter(prefix="/api/files", tags=["files"])
 
 
+@router.post("/upload-template")
+async def upload_template_file(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Upload a template file for a question
+
+    Super admins can upload template files that families can download.
+    These are not tied to a specific application.
+    """
+    # Only super admins can upload templates
+    if current_user.role != "super_admin":
+        raise HTTPException(status_code=403, detail="Super admin access required")
+
+    # Validate file size
+    file_content = await file.read()
+    file_size = len(file_content)
+
+    if file_size > settings.MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size is {settings.MAX_FILE_SIZE / (1024*1024)}MB"
+        )
+
+    # Validate file type
+    file_extension = "." + file.filename.split(".")[-1].lower() if "." in file.filename else ""
+    if file_extension not in settings.ALLOWED_FILE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type not allowed. Allowed types: {', '.join(settings.ALLOWED_FILE_TYPES)}"
+        )
+
+    # Reset file pointer for upload
+    await file.seek(0)
+
+    try:
+        # Upload to Supabase Storage in templates folder
+        upload_result = storage_service.upload_file(
+            file=file_content,
+            filename=file.filename,
+            application_id="templates",  # Special folder for templates
+            question_id="templates",
+            content_type=file.content_type or "application/octet-stream"
+        )
+
+        # Create File record without application_id (template files)
+        file_record = FileModel(
+            application_id=None,  # No application for templates
+            uploaded_by=current_user.id,
+            file_name=file.filename,
+            storage_path=upload_result["path"],
+            file_size=file_size,
+            file_type=file.content_type or "application/octet-stream",
+            section="template"
+        )
+        db.add(file_record)
+        db.commit()
+        db.refresh(file_record)
+
+        return {
+            "success": True,
+            "file_id": str(file_record.id),
+            "filename": file_record.file_name,
+            "url": upload_result.get("url"),
+            "message": "Template file uploaded successfully"
+        }
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
 @router.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
@@ -137,6 +211,46 @@ async def upload_file(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
+@router.get("/template/{file_id}")
+async def get_template_file(
+    file_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get template file metadata and download URL
+
+    Any authenticated user can download template files
+    """
+    # Get file record
+    file_record = db.query(FileModel).filter(
+        FileModel.id == file_id,
+        FileModel.section == "template"
+    ).first()
+
+    if not file_record:
+        raise HTTPException(status_code=404, detail="Template file not found")
+
+    try:
+        # Generate signed URL (valid for 1 hour)
+        signed_url = storage_service.get_signed_url(
+            file_record.storage_path,
+            expires_in=3600
+        )
+
+        return {
+            "id": file_record.id,
+            "filename": file_record.file_name,
+            "size": file_record.file_size,
+            "content_type": file_record.file_type,
+            "url": signed_url,
+            "created_at": file_record.created_at.isoformat()
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get template file: {str(e)}")
 
 
 @router.get("/{file_id}")

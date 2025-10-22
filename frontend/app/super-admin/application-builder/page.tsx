@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import FieldConfigurator, { FieldConfig } from '@/components/FieldConfigurator';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -56,13 +57,21 @@ import {
   deleteQuestion,
   duplicateQuestion,
   reorderQuestions,
+  createHeader,
+  updateHeader,
+  deleteHeader,
+  reorderHeaders,
   Section,
   Question,
+  Header,
   SectionCreate,
   SectionUpdate,
   QuestionCreate,
   QuestionUpdate,
+  HeaderCreate,
+  HeaderUpdate,
 } from '@/lib/api-application-builder';
+import { uploadTemplateFile } from '@/lib/api-files';
 
 const questionTypes = [
   { value: 'text', label: 'Short Text', description: 'Single line text input' },
@@ -72,6 +81,9 @@ const questionTypes = [
   { value: 'checkbox', label: 'Checkboxes', description: 'Select multiple options' },
   { value: 'file_upload', label: 'File Upload', description: 'Upload documents' },
   { value: 'profile_picture', label: 'Profile Picture', description: 'Upload camper photo (displays at top of each section)' },
+  { value: 'medication_list', label: 'Medication List', description: 'Nested table for medications with dose schedules' },
+  { value: 'allergy_list', label: 'Allergy List', description: 'List of allergies with severity and reactions' },
+  { value: 'table', label: 'Generic Table', description: 'Customizable table with configurable columns' },
   { value: 'date', label: 'Date', description: 'Date picker' },
   { value: 'email', label: 'Email', description: 'Email address' },
   { value: 'phone', label: 'Phone', description: 'Phone number' },
@@ -84,6 +96,45 @@ const visibilityOptions = [
   { value: 'paid', label: 'After Payment', description: 'Show only after payment is complete' },
 ];
 
+// Default field configurations for medication and allergy lists
+const DEFAULT_MEDICATION_FIELDS: FieldConfig[] = [
+  { name: 'medication_name', label: 'Medication', type: 'text', required: true, placeholder: 'e.g., Adderall' },
+  { name: 'strength', label: 'Strength', type: 'text', required: true, placeholder: 'e.g., 15mg' },
+  { name: 'dose_amount', label: 'Dose Amount', type: 'text', required: true, placeholder: 'e.g., 1 pill two times a day' },
+  {
+    name: 'dose_form',
+    label: 'Dose Form',
+    type: 'dropdown',
+    required: true,
+    options: ['Pill', 'Tablet', 'Capsule', 'Liquid', 'Eye Drop', 'Nasal Spray', 'Inhaler', 'Injection', 'Topical', 'Patch', 'Suppository']
+  }
+];
+
+const DEFAULT_DOSE_FIELDS: FieldConfig[] = [
+  {
+    name: 'given_type',
+    label: 'Given',
+    type: 'dropdown',
+    required: true,
+    options: ['At specific time', 'As needed']
+  },
+  { name: 'time', label: 'Time', type: 'text', required: false, placeholder: 'HH:MM (e.g., 08:00, 14:30) or N/A' },
+  { name: 'notes', label: 'Notes', type: 'textarea', required: false, placeholder: 'Additional instructions...' }
+];
+
+const DEFAULT_ALLERGY_FIELDS: FieldConfig[] = [
+  { name: 'allergen', label: 'Allergen', type: 'text', required: true, placeholder: 'e.g., Peanuts, Penicillin' },
+  { name: 'reaction', label: 'Reaction', type: 'text', required: true, placeholder: 'e.g., Hives, difficulty breathing' },
+  {
+    name: 'severity',
+    label: 'Severity',
+    type: 'dropdown',
+    required: true,
+    options: ['Mild', 'Moderate', 'Severe']
+  },
+  { name: 'notes', label: 'Additional Notes', type: 'textarea', required: false, placeholder: 'Any additional information...' }
+];
+
 export default function ApplicationBuilderPage() {
   const { token } = useAuth();
   const [sections, setSections] = useState<Section[]>([]);
@@ -92,12 +143,14 @@ export default function ApplicationBuilderPage() {
   const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null);
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
+  const [editingHeaderId, setEditingHeaderId] = useState<string | null>(null);
   const [isSectionDialogOpen, setIsSectionDialogOpen] = useState(false);
   const [isQuestionDialogOpen, setIsQuestionDialogOpen] = useState(false);
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['1', '2', '3', '4']));
+  const [isHeaderDialogOpen, setIsHeaderDialogOpen] = useState(false);
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
-  const [draggedQuestion, setDraggedQuestion] = useState<{ sectionId: string; questionIndex: number } | null>(null);
+  const [draggedItem, setDraggedItem] = useState<{ sectionId: string; itemIndex: number; itemType: 'question' | 'header' } | null>(null);
 
   // Section form state
   const [sectionForm, setSectionForm] = useState({
@@ -121,6 +174,12 @@ export default function ApplicationBuilderPage() {
     show_if_answer: null,
   });
 
+  // Header form state
+  const [headerForm, setHeaderForm] = useState({
+    header_text: '',
+    is_active: true,
+  });
+
   // Load sections on mount
   useEffect(() => {
     if (!token) return;
@@ -130,10 +189,6 @@ export default function ApplicationBuilderPage() {
         setLoading(true);
         const data = await getSections(token, true); // Include inactive
         setSections(data);
-
-        // Expand all sections by default
-        const allIds = new Set(data.map(s => s.id));
-        setExpandedSections(allIds);
       } catch (error) {
         console.error('Failed to load sections:', error);
         setSaveStatus('error');
@@ -232,6 +287,8 @@ export default function ApplicationBuilderPage() {
       validation_rules: {},
       show_if_question_id: null,
       show_if_answer: null,
+      detail_prompt_trigger: [],
+      detail_prompt_text: null,
     });
     setSelectedSection(sections.find(s => s.id === sectionId) || null);
     setEditingQuestionId(null);
@@ -257,6 +314,7 @@ export default function ApplicationBuilderPage() {
           question_text: questionForm.question_text,
           question_type: questionForm.question_type,
           help_text: questionForm.help_text,
+          description: questionForm.description,
           placeholder: questionForm.placeholder,
           is_required: questionForm.is_required,
           is_active: questionForm.is_active,
@@ -266,6 +324,10 @@ export default function ApplicationBuilderPage() {
           template_file_id: questionForm.template_file_id,
           show_if_question_id: questionForm.show_if_question_id,
           show_if_answer: questionForm.show_if_answer,
+          detail_prompt_trigger: questionForm.detail_prompt_trigger,
+          detail_prompt_text: questionForm.detail_prompt_trigger && questionForm.detail_prompt_trigger.length > 0
+            ? (questionForm.detail_prompt_text || 'Please provide details')
+            : questionForm.detail_prompt_text,
         });
 
         setSections(prev =>
@@ -287,6 +349,7 @@ export default function ApplicationBuilderPage() {
           question_text: questionForm.question_text!,
           question_type: questionForm.question_type!,
           help_text: questionForm.help_text,
+          description: questionForm.description,
           placeholder: questionForm.placeholder,
           is_required: questionForm.is_required!,
           is_active: questionForm.is_active!,
@@ -297,6 +360,10 @@ export default function ApplicationBuilderPage() {
           template_file_id: questionForm.template_file_id,
           show_if_question_id: questionForm.show_if_question_id,
           show_if_answer: questionForm.show_if_answer,
+          detail_prompt_trigger: questionForm.detail_prompt_trigger,
+          detail_prompt_text: questionForm.detail_prompt_trigger && questionForm.detail_prompt_trigger.length > 0
+            ? (questionForm.detail_prompt_text || 'Please provide details')
+            : questionForm.detail_prompt_text,
         });
 
         setSections(prev =>
@@ -375,6 +442,104 @@ export default function ApplicationBuilderPage() {
       setSaveStatus('error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Header handlers
+  const handleCreateHeader = (sectionId: string) => {
+    setHeaderForm({
+      header_text: '',
+      is_active: true,
+    });
+    setSelectedSection(sections.find(s => s.id === sectionId) || null);
+    setEditingHeaderId(null);
+    setIsHeaderDialogOpen(true);
+  };
+
+  const handleEditHeader = (sectionId: string, header: Header) => {
+    setHeaderForm({
+      header_text: header.header_text,
+      is_active: header.is_active,
+    });
+    setSelectedSection(sections.find(s => s.id === sectionId) || null);
+    setEditingHeaderId(header.id);
+    setIsHeaderDialogOpen(true);
+  };
+
+  const handleSaveHeader = async () => {
+    if (!token || !selectedSection) return;
+
+    try {
+      setSaving(true);
+
+      if (editingHeaderId) {
+        // Update existing header
+        const updated = await updateHeader(token, editingHeaderId, {
+          header_text: headerForm.header_text,
+          is_active: headerForm.is_active,
+        });
+
+        setSections(prev =>
+          prev.map(section =>
+            section.id === selectedSection.id
+              ? {
+                  ...section,
+                  headers: section.headers.map(h =>
+                    h.id === editingHeaderId ? updated : h
+                  ),
+                }
+              : section
+          )
+        );
+      } else {
+        // Create new header
+        const created = await createHeader(token, {
+          section_id: selectedSection.id,
+          header_text: headerForm.header_text,
+          order_index: selectedSection.questions.length + selectedSection.headers.length,
+          is_active: headerForm.is_active,
+        });
+
+        setSections(prev =>
+          prev.map(section =>
+            section.id === selectedSection.id
+              ? { ...section, headers: [...section.headers, created] }
+              : section
+          )
+        );
+      }
+
+      setSaveStatus('success');
+      setIsHeaderDialogOpen(false);
+      setTimeout(() => setSaveStatus('idle'), 3000);
+    } catch (error) {
+      console.error('Failed to save header:', error);
+      setSaveStatus('error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteHeader = async (sectionId: string, headerId: string) => {
+    if (!token) return;
+    if (!confirm('Are you sure you want to delete this header?')) return;
+
+    try {
+      await deleteHeader(token, headerId);
+      setSections(prev =>
+        prev.map(section => {
+          if (section.id !== sectionId) return section;
+          return {
+            ...section,
+            headers: section.headers.filter(h => h.id !== headerId),
+          };
+        })
+      );
+      setSaveStatus('success');
+      setTimeout(() => setSaveStatus('idle'), 3000);
+    } catch (error) {
+      console.error('Failed to delete header:', error);
+      setSaveStatus('error');
     }
   };
 
@@ -494,67 +659,154 @@ export default function ApplicationBuilderPage() {
     }
   };
 
-  // Drag and drop handlers for questions
-  const handleQuestionDragStart = (sectionId: string, questionIndex: number) => {
-    setDraggedQuestion({ sectionId, questionIndex });
+  // Helper function to get unified items (headers + questions) sorted by order_index
+  const getSectionItems = (section: Section): Array<{ type: 'header' | 'question'; data: Header | Question; order_index: number }> => {
+    const items = [
+      ...section.headers.map(h => ({ type: 'header' as const, data: h, order_index: h.order_index })),
+      ...section.questions.map(q => ({ type: 'question' as const, data: q, order_index: q.order_index }))
+    ];
+    return items.sort((a, b) => a.order_index - b.order_index);
   };
 
-  const handleQuestionDragOver = (e: React.DragEvent) => {
+  // Unified move item up/down
+  const moveItemUp = async (sectionId: string, itemIndex: number) => {
+    if (!token || itemIndex === 0) return;
+
+    const section = sections.find(s => s.id === sectionId);
+    if (!section) return;
+
+    const items = getSectionItems(section);
+    const newItems = [...items];
+
+    // Swap items
+    [newItems[itemIndex - 1], newItems[itemIndex]] = [newItems[itemIndex], newItems[itemIndex - 1]];
+
+    // Update order_index for all items
+    newItems.forEach((item, i) => {
+      item.data.order_index = i;
+    });
+
+    // Separate back into headers and questions
+    const newHeaders = newItems.filter(item => item.type === 'header').map(item => item.data as Header);
+    const newQuestions = newItems.filter(item => item.type === 'question').map(item => item.data as Question);
+
+    // Update state
+    setSections(prev => prev.map(s => s.id === sectionId ? { ...s, headers: newHeaders, questions: newQuestions } : s));
+
+    // Save to backend
+    try {
+      await reorderHeaders(token, newHeaders.map(h => h.id));
+      await reorderQuestions(token, newQuestions.map(q => q.id));
+    } catch (error) {
+      console.error('Failed to reorder items:', error);
+      const data = await getSections(token, true);
+      setSections(data);
+    }
+  };
+
+  const moveItemDown = async (sectionId: string, itemIndex: number) => {
+    if (!token) return;
+
+    const section = sections.find(s => s.id === sectionId);
+    if (!section) return;
+
+    const items = getSectionItems(section);
+    if (itemIndex === items.length - 1) return;
+
+    const newItems = [...items];
+
+    // Swap items
+    [newItems[itemIndex], newItems[itemIndex + 1]] = [newItems[itemIndex + 1], newItems[itemIndex]];
+
+    // Update order_index for all items
+    newItems.forEach((item, i) => {
+      item.data.order_index = i;
+    });
+
+    // Separate back into headers and questions
+    const newHeaders = newItems.filter(item => item.type === 'header').map(item => item.data as Header);
+    const newQuestions = newItems.filter(item => item.type === 'question').map(item => item.data as Question);
+
+    // Update state
+    setSections(prev => prev.map(s => s.id === sectionId ? { ...s, headers: newHeaders, questions: newQuestions } : s));
+
+    // Save to backend
+    try {
+      await reorderHeaders(token, newHeaders.map(h => h.id));
+      await reorderQuestions(token, newQuestions.map(q => q.id));
+    } catch (error) {
+      console.error('Failed to reorder items:', error);
+      const data = await getSections(token, true);
+      setSections(data);
+    }
+  };
+
+  // Unified drag and drop handlers
+  const handleItemDragStart = (sectionId: string, itemIndex: number, itemType: 'question' | 'header') => {
+    setDraggedItem({ sectionId, itemIndex, itemType });
+  };
+
+  const handleItemDragOver = (e: React.DragEvent) => {
     e.preventDefault(); // Allow drop
   };
 
-  const handleQuestionDrop = async (targetSectionId: string, targetIndex: number) => {
-    if (!draggedQuestion || !token) return;
+  const handleItemDrop = async (targetSectionId: string, targetIndex: number) => {
+    if (!draggedItem || !token) return;
 
     // Can't drag between different sections
-    if (draggedQuestion.sectionId !== targetSectionId) {
-      setDraggedQuestion(null);
+    if (draggedItem.sectionId !== targetSectionId) {
+      setDraggedItem(null);
       return;
     }
 
-    const { sectionId, questionIndex: sourceIndex } = draggedQuestion;
+    const { sectionId, itemIndex: sourceIndex } = draggedItem;
 
     // Same position, no change
     if (sourceIndex === targetIndex) {
-      setDraggedQuestion(null);
+      setDraggedItem(null);
       return;
     }
 
-    try {
-      const sectionIndex = sections.findIndex(s => s.id === sectionId);
-      if (sectionIndex === -1) return;
+    const section = sections.find(s => s.id === sectionId);
+    if (!section) return;
 
-      const section = sections[sectionIndex];
-      const newQuestions = [...section.questions];
+    try {
+      const items = getSectionItems(section);
+      const newItems = [...items];
 
       // Remove from source position
-      const [movedQuestion] = newQuestions.splice(sourceIndex, 1);
+      const [movedItem] = newItems.splice(sourceIndex, 1);
 
       // Insert at target position
-      newQuestions.splice(targetIndex, 0, movedQuestion);
+      newItems.splice(targetIndex, 0, movedItem);
 
-      // Update order_index for all questions
-      newQuestions.forEach((q, i) => q.order_index = i);
+      // Update order_index for all items
+      newItems.forEach((item, i) => {
+        item.data.order_index = i;
+      });
+
+      // Separate back into headers and questions
+      const newHeaders = newItems.filter(item => item.type === 'header').map(item => item.data as Header);
+      const newQuestions = newItems.filter(item => item.type === 'question').map(item => item.data as Question);
 
       // Update state
-      const newSections = [...sections];
-      newSections[sectionIndex] = { ...section, questions: newQuestions };
-      setSections(newSections);
+      setSections(prev => prev.map(s => s.id === sectionId ? { ...s, headers: newHeaders, questions: newQuestions } : s));
 
       // Save new order to backend
+      await reorderHeaders(token, newHeaders.map(h => h.id));
       await reorderQuestions(token, newQuestions.map(q => q.id));
     } catch (error) {
-      console.error('Failed to reorder questions:', error);
+      console.error('Failed to reorder items:', error);
       // Reload sections on error
       const data = await getSections(token, true);
       setSections(data);
     } finally {
-      setDraggedQuestion(null);
+      setDraggedItem(null);
     }
   };
 
-  const handleQuestionDragEnd = () => {
-    setDraggedQuestion(null);
+  const handleItemDragEnd = () => {
+    setDraggedItem(null);
   };
 
   const addOption = () => {
@@ -654,14 +906,16 @@ export default function ApplicationBuilderPage() {
         {sections.map((section, index) => (
           <Card key={section.id}>
             <CardHeader className="cursor-pointer" onClick={() => toggleSection(section.id)}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3 flex-1">
-                  {expandedSections.has(section.id) ? (
-                    <ChevronDown className="h-5 w-5 text-muted-foreground" />
-                  ) : (
-                    <ChevronRight className="h-5 w-5 text-muted-foreground" />
-                  )}
-                  <GripVertical className="h-5 w-5 text-muted-foreground" />
+              <div className="flex items-start justify-between">
+                <div className="flex items-start gap-3 flex-1">
+                  <div className="pt-0.5">
+                    {expandedSections.has(section.id) ? (
+                      <ChevronDown className="h-5 w-5 text-muted-foreground flex-shrink-0" />
+                    ) : (
+                      <ChevronRight className="h-5 w-5 text-muted-foreground flex-shrink-0" />
+                    )}
+                  </div>
+                  <GripVertical className="h-5 w-5 text-muted-foreground flex-shrink-0 pt-0.5" />
                   <div>
                     <div className="flex items-center gap-2">
                       <CardTitle className="text-lg">
@@ -684,7 +938,7 @@ export default function ApplicationBuilderPage() {
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-start gap-2 pt-0.5" onClick={(e) => e.stopPropagation()}>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -722,27 +976,110 @@ export default function ApplicationBuilderPage() {
             {expandedSections.has(section.id) && (
               <CardContent>
                 <div className="space-y-3">
-                  {section.questions.map((question, qIndex) => (
-                    <div
-                      key={question.id}
-                      draggable
-                      onDragStart={() => handleQuestionDragStart(section.id, qIndex)}
-                      onDragOver={handleQuestionDragOver}
-                      onDrop={() => handleQuestionDrop(section.id, qIndex)}
-                      onDragEnd={handleQuestionDragEnd}
-                      className={`flex items-start gap-3 p-3 bg-muted rounded-lg transition-all cursor-move ${
-                        draggedQuestion?.sectionId === section.id && draggedQuestion?.questionIndex === qIndex
-                          ? 'opacity-50 border-2 border-dashed border-camp-green'
-                          : 'hover:bg-muted/80'
-                      }`}
-                    >
+                  {/* Unified Headers and Questions */}
+                  {getSectionItems(section).map((item, itemIndex) => {
+                    const items = getSectionItems(section);
+
+                    if (item.type === 'header') {
+                      const header = item.data as Header;
+                      return (
+                        <div
+                          key={`header-${header.id}`}
+                          draggable
+                          onDragStart={() => handleItemDragStart(section.id, itemIndex, 'header')}
+                          onDragOver={handleItemDragOver}
+                          onDrop={() => handleItemDrop(section.id, itemIndex)}
+                          onDragEnd={handleItemDragEnd}
+                          className={`flex items-start gap-3 p-4 bg-amber-50 rounded-lg border-2 border-amber-300 transition-all cursor-move ${
+                            draggedItem?.sectionId === section.id && draggedItem?.itemIndex === itemIndex
+                              ? 'opacity-50 border-dashed'
+                              : 'hover:bg-amber-100'
+                          }`}
+                        >
+                          <GripVertical className="h-5 w-5 text-amber-600 mt-1 cursor-grab active:cursor-grabbing" />
+                          <div className="flex-1">
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2">
+                                  <p className="text-lg font-bold text-amber-900">
+                                    {header.header_text}
+                                  </p>
+                                  {!header.is_active && (
+                                    <Badge variant="secondary" className="text-xs">Inactive</Badge>
+                                  )}
+                                </div>
+                                <p className="text-xs text-amber-700 mt-1">
+                                  Section Header - Questions below will be grouped under this
+                                </p>
+                              </div>
+                              <div className="flex gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => moveItemUp(section.id, itemIndex)}
+                                  disabled={itemIndex === 0}
+                                  title="Move up"
+                                  className="hover:bg-amber-100"
+                                >
+                                  <MoveUp className="h-3 w-3 text-amber-700" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => moveItemDown(section.id, itemIndex)}
+                                  disabled={itemIndex === items.length - 1}
+                                  title="Move down"
+                                  className="hover:bg-amber-100"
+                                >
+                                  <MoveDown className="h-3 w-3 text-amber-700" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleEditHeader(section.id, header)}
+                                  title="Edit header"
+                                  className="hover:bg-amber-100"
+                                >
+                                  <Edit className="h-3 w-3 text-amber-700" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleDeleteHeader(section.id, header.id)}
+                                  title="Delete header"
+                                  className="hover:bg-amber-100"
+                                >
+                                  <Trash2 className="h-3 w-3 text-amber-700" />
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    } else {
+                      const question = item.data as Question;
+                      const questionNumber = items.slice(0, itemIndex).filter(i => i.type === 'question').length + 1;
+                      return (
+                        <div
+                          key={`question-${question.id}`}
+                          draggable
+                          onDragStart={() => handleItemDragStart(section.id, itemIndex, 'question')}
+                          onDragOver={handleItemDragOver}
+                          onDrop={() => handleItemDrop(section.id, itemIndex)}
+                          onDragEnd={handleItemDragEnd}
+                          className={`flex items-start gap-3 p-3 bg-muted rounded-lg transition-all cursor-move ${
+                            draggedItem?.sectionId === section.id && draggedItem?.itemIndex === itemIndex
+                              ? 'opacity-50 border-2 border-dashed border-camp-green'
+                              : 'hover:bg-muted/80'
+                          }`}
+                        >
                       <GripVertical className="h-5 w-5 text-muted-foreground mt-1 cursor-grab active:cursor-grabbing" />
                       <div className="flex-1">
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
                             <div className="flex items-center gap-2">
                               <p className="font-medium">
-                                {qIndex + 1}. {question.question_text}
+                                {questionNumber}. {question.question_text}
                                 {question.is_required && (
                                   <span className="text-red-500 ml-1">*</span>
                                 )}
@@ -786,6 +1123,26 @@ export default function ApplicationBuilderPage() {
                                 }
                                 return null;
                               })()}
+                              {question.detail_prompt_trigger && Array.isArray(question.detail_prompt_trigger) && question.detail_prompt_trigger.length > 0 && question.detail_prompt_text && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-xs bg-green-50 border-green-300 text-green-700 flex items-center gap-1"
+                                  title={`Asks for details when any of these are selected: ${question.detail_prompt_trigger.join(', ')}`}
+                                >
+                                  <FileText className="h-3 w-3" />
+                                  Detail Prompt
+                                </Badge>
+                              )}
+                              {question.template_file_id && question.template_filename && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-xs bg-purple-50 border-purple-300 text-purple-700 flex items-center gap-1"
+                                  title={`Template file: ${question.template_filename}`}
+                                >
+                                  <Download className="h-3 w-3" />
+                                  {question.template_filename}
+                                </Badge>
+                              )}
                             </div>
                             {(() => {
                               const conditionalInfo = getConditionalLogicInfo(question);
@@ -799,13 +1156,19 @@ export default function ApplicationBuilderPage() {
                               }
                               return null;
                             })()}
+                            {question.detail_prompt_trigger && Array.isArray(question.detail_prompt_trigger) && question.detail_prompt_trigger.length > 0 && question.detail_prompt_text && (
+                              <p className="text-xs text-green-600 mt-2 bg-green-50 p-2 rounded border border-green-200">
+                                <FileText className="h-3 w-3 inline mr-1" />
+                                Asks for details when any of these are selected: <span className="font-semibold">{question.detail_prompt_trigger.join(', ')}</span> - "{question.detail_prompt_text}"
+                              </p>
+                            )}
                           </div>
                           <div className="flex gap-1">
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => moveQuestionUp(section.id, qIndex)}
-                              disabled={qIndex === 0}
+                              onClick={() => moveItemUp(section.id, itemIndex)}
+                              disabled={itemIndex === 0}
                               title="Move up"
                             >
                               <MoveUp className="h-3 w-3" />
@@ -813,8 +1176,8 @@ export default function ApplicationBuilderPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => moveQuestionDown(section.id, qIndex)}
-                              disabled={qIndex === section.questions.length - 1}
+                              onClick={() => moveItemDown(section.id, itemIndex)}
+                              disabled={itemIndex === items.length - 1}
                               title="Move down"
                             >
                               <MoveDown className="h-3 w-3" />
@@ -847,18 +1210,31 @@ export default function ApplicationBuilderPage() {
                           </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                        </div>
+                      );
+                    }
+                  })}
 
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleCreateQuestion(section.id)}
-                    className="w-full mt-2"
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    Add Question
-                  </Button>
+                  <div className="flex gap-2 mt-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleCreateQuestion(section.id)}
+                      className="flex-1"
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Question
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleCreateHeader(section.id)}
+                      className="flex-1 bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-900"
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Header
+                    </Button>
+                  </div>
                 </div>
               </CardContent>
             )}
@@ -893,7 +1269,7 @@ export default function ApplicationBuilderPage() {
               <Label htmlFor="section-description">Description</Label>
               <Textarea
                 id="section-description"
-                value={sectionForm.description}
+                value={sectionForm.description || ''}
                 onChange={(e) => setSectionForm(prev => ({ ...prev, description: e.target.value }))}
                 placeholder="Brief description of this section"
               />
@@ -970,6 +1346,7 @@ export default function ApplicationBuilderPage() {
           </DialogHeader>
 
           <div className="space-y-4">
+            {/* Section Header - Optional grouping */}
             <div className="space-y-2">
               <Label htmlFor="question-text">Question Text *</Label>
               <Input
@@ -984,9 +1361,25 @@ export default function ApplicationBuilderPage() {
               <Label htmlFor="question-type">Question Type *</Label>
               <Select
                 value={questionForm.question_type}
-                onValueChange={(value: any) =>
-                  setQuestionForm(prev => ({ ...prev, question_type: value }))
-                }
+                onValueChange={(value: any) => {
+                  const updatedForm: any = { ...questionForm, question_type: value };
+
+                  // Initialize default field configurations for medication and allergy lists
+                  if (value === 'medication_list' && !questionForm.options?.medication_fields) {
+                    updatedForm.options = {
+                      ...questionForm.options,
+                      medication_fields: DEFAULT_MEDICATION_FIELDS,
+                      dose_fields: DEFAULT_DOSE_FIELDS
+                    };
+                  } else if (value === 'allergy_list' && !questionForm.options?.allergy_fields) {
+                    updatedForm.options = {
+                      ...questionForm.options,
+                      allergy_fields: DEFAULT_ALLERGY_FIELDS
+                    };
+                  }
+
+                  setQuestionForm(updatedForm);
+                }}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -1008,11 +1401,81 @@ export default function ApplicationBuilderPage() {
               <Label htmlFor="help-text">Help Text</Label>
               <Textarea
                 id="help-text"
-                value={questionForm.help_text}
+                value={questionForm.help_text || ''}
                 onChange={(e) => setQuestionForm(prev => ({ ...prev, help_text: e.target.value }))}
                 placeholder="Additional guidance for applicants"
+                rows={2}
               />
             </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="description">
+                Description (Markdown Supported)
+                <span className="text-xs text-muted-foreground ml-2">Optional - Use for long-form content like authorization text</span>
+              </Label>
+              <Textarea
+                id="description"
+                value={questionForm.description || ''}
+                onChange={(e) => setQuestionForm(prev => ({ ...prev, description: e.target.value }))}
+                placeholder="# Authorization Agreement&#10;&#10;By checking the box below, you agree to:&#10;&#10;- Term 1&#10;- Term 2&#10;- Term 3&#10;&#10;**Bold text** and *italic text* supported"
+                rows={8}
+                className="font-mono text-sm"
+              />
+              <p className="text-xs text-muted-foreground">
+                Supports markdown formatting: **bold**, *italic*, # headers, - bullet lists, [links](url)
+              </p>
+            </div>
+
+            {/* Template File Upload for file_upload questions */}
+            {questionForm.question_type === 'file_upload' && (
+              <div className="space-y-2 p-4 bg-green-50 rounded-lg border border-green-200">
+                <Label>Template File (Optional)</Label>
+                <p className="text-sm text-green-700 mb-2">
+                  Upload a template file that families can download, fill out, and re-upload.
+                </p>
+                {questionForm.template_file_id ? (
+                  <div className="flex items-center gap-2 p-3 bg-white rounded border border-green-300">
+                    <FileText className="h-4 w-4 text-green-600" />
+                    <span className="text-sm flex-1">Template file attached</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setQuestionForm(prev => ({ ...prev, template_file_id: null }))}
+                    >
+                      <Trash2 className="h-4 w-4 text-red-600" />
+                    </Button>
+                  </div>
+                ) : (
+                  <div>
+                    <Input
+                      type="file"
+                      accept=".pdf,.doc,.docx,.xls,.xlsx"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0]
+                        if (!file || !token) return
+
+                        try {
+                          setSaving(true)
+                          const result = await uploadTemplateFile(token, file)
+                          setQuestionForm(prev => ({ ...prev, template_file_id: result.file_id }))
+                          setSaveStatus('success')
+                          setTimeout(() => setSaveStatus('idle'), 2000)
+                        } catch (error) {
+                          console.error('Failed to upload template:', error)
+                          setSaveStatus('error')
+                          setTimeout(() => setSaveStatus('idle'), 3000)
+                        } finally {
+                          setSaving(false)
+                        }
+                      }}
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      PDF, Word, or Excel files (max 10MB)
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Options for dropdown/multiple_choice/checkbox */}
             {['dropdown', 'multiple_choice', 'checkbox'].includes(questionForm.question_type || '') && (
@@ -1160,6 +1623,169 @@ export default function ApplicationBuilderPage() {
               )}
             </div>
 
+            {/* Detail Prompt - Inline follow-up question */}
+            {['dropdown', 'multiple_choice', 'checkbox'].includes(questionForm.question_type || '') && (
+              <div className="space-y-4 p-4 bg-green-50 rounded-lg border border-green-200">
+                <div className="flex items-center gap-2">
+                  <div className="h-2 w-2 bg-green-500 rounded-full"></div>
+                  <Label className="text-base font-semibold text-green-900">Detail Prompt</Label>
+                </div>
+                <p className="text-sm text-green-700">
+                  Show a textarea asking for details when a specific answer is selected (e.g., "Yes" → "Please provide details")
+                </p>
+
+                <div className="space-y-2">
+                  <Label>Show detail prompt when any of these answers are selected:</Label>
+                  {questionForm.options && questionForm.options.length > 0 ? (
+                    <div className="space-y-2 bg-white p-3 rounded-lg border border-green-300">
+                      {questionForm.options.map((option, idx) => (
+                        <label key={idx} className="flex items-center space-x-2 cursor-pointer hover:bg-green-50 p-2 rounded">
+                          <input
+                            type="checkbox"
+                            checked={questionForm.detail_prompt_trigger?.includes(option) || false}
+                            onChange={(e) => {
+                              const triggers = questionForm.detail_prompt_trigger || [];
+                              setQuestionForm(prev => ({
+                                ...prev,
+                                detail_prompt_trigger: e.target.checked
+                                  ? [...triggers, option]
+                                  : triggers.filter(t => t !== option)
+                              }));
+                            }}
+                            className="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                          />
+                          <span className="text-sm font-medium">{option}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground italic">
+                      Add options above to enable detail prompts
+                    </p>
+                  )}
+                </div>
+
+                {questionForm.detail_prompt_trigger && questionForm.detail_prompt_trigger.length > 0 && (
+                  <div className="space-y-2">
+                    <Label htmlFor="detail-prompt-text">Detail prompt text:</Label>
+                    <Textarea
+                      id="detail-prompt-text"
+                      value={questionForm.detail_prompt_text || ''}
+                      onChange={(e) => setQuestionForm(prev => ({ ...prev, detail_prompt_text: e.target.value }))}
+                      placeholder="Please provide details..."
+                      rows={3}
+                    />
+                    <p className="text-xs text-green-600">
+                      When any of these answers are selected: <span className="font-semibold">{questionForm.detail_prompt_trigger.join(', ')}</span>, a textarea will appear below asking for these details
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Field Configuration for Medication and Allergy Lists */}
+            {questionForm.question_type === 'medication_list' && (
+              <div className="space-y-6 p-6 bg-purple-50 rounded-lg border-2 border-purple-200">
+                <div className="flex items-center gap-2 mb-4">
+                  <FileText className="h-5 w-5 text-purple-600" />
+                  <h3 className="text-lg font-semibold text-purple-900">Configure Medication Fields</h3>
+                </div>
+                <p className="text-sm text-purple-700 mb-4">
+                  Customize the fields that families will fill out for each medication and dose schedule.
+                </p>
+
+                <FieldConfigurator
+                  title="Medication Information Fields"
+                  fields={questionForm.options?.medication_fields || DEFAULT_MEDICATION_FIELDS}
+                  onChange={(fields) => setQuestionForm(prev => ({
+                    ...prev,
+                    options: { ...prev.options, medication_fields: fields }
+                  }))}
+                />
+
+                <Separator className="my-6" />
+
+                <FieldConfigurator
+                  title="Dose Schedule Fields"
+                  fields={questionForm.options?.dose_fields || DEFAULT_DOSE_FIELDS}
+                  onChange={(fields) => setQuestionForm(prev => ({
+                    ...prev,
+                    options: { ...prev.options, dose_fields: fields }
+                  }))}
+                />
+              </div>
+            )}
+
+            {questionForm.question_type === 'allergy_list' && (
+              <div className="space-y-6 p-6 bg-orange-50 rounded-lg border-2 border-orange-200">
+                <div className="flex items-center gap-2 mb-4">
+                  <FileText className="h-5 w-5 text-orange-600" />
+                  <h3 className="text-lg font-semibold text-orange-900">Configure Allergy Fields</h3>
+                </div>
+                <p className="text-sm text-orange-700 mb-4">
+                  Customize the fields that families will fill out for each allergy.
+                </p>
+
+                <FieldConfigurator
+                  title="Allergy Information Fields"
+                  fields={questionForm.options?.allergy_fields || DEFAULT_ALLERGY_FIELDS}
+                  onChange={(fields) => setQuestionForm(prev => ({
+                    ...prev,
+                    options: { ...prev.options, allergy_fields: fields }
+                  }))}
+                />
+              </div>
+            )}
+
+            {questionForm.question_type === 'table' && (
+              <div className="space-y-6 p-6 bg-blue-50 rounded-lg border-2 border-blue-200">
+                <div className="flex items-center gap-2 mb-4">
+                  <FileText className="h-5 w-5 text-blue-600" />
+                  <h3 className="text-lg font-semibold text-blue-900">Configure Table Columns</h3>
+                </div>
+                <p className="text-sm text-blue-700 mb-4">
+                  Customize the columns that will appear in the table. Users can add multiple rows.
+                </p>
+
+                <div className="space-y-4 mb-6">
+                  <div>
+                    <Label htmlFor="addButtonText">Add Button Text</Label>
+                    <Input
+                      id="addButtonText"
+                      value={questionForm.options?.addButtonText || 'Add Row'}
+                      onChange={(e) => setQuestionForm(prev => ({
+                        ...prev,
+                        options: { ...prev.options, addButtonText: e.target.value }
+                      }))}
+                      placeholder="e.g., Add Entry, Add Item"
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="emptyStateText">Empty State Message</Label>
+                    <Input
+                      id="emptyStateText"
+                      value={questionForm.options?.emptyStateText || ''}
+                      onChange={(e) => setQuestionForm(prev => ({
+                        ...prev,
+                        options: { ...prev.options, emptyStateText: e.target.value }
+                      }))}
+                      placeholder="e.g., No entries yet. Click Add Row to get started."
+                    />
+                  </div>
+                </div>
+
+                <FieldConfigurator
+                  title="Table Columns"
+                  fields={questionForm.options?.columns || []}
+                  onChange={(fields) => setQuestionForm(prev => ({
+                    ...prev,
+                    options: { ...prev.options, columns: fields }
+                  }))}
+                />
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-4">
               <div className="flex items-center justify-between">
                 <div className="space-y-0.5">
@@ -1205,6 +1831,58 @@ export default function ApplicationBuilderPage() {
                 </>
               ) : (
                 'Save Question'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Header Dialog */}
+      <Dialog open={isHeaderDialogOpen} onOpenChange={setIsHeaderDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editingHeaderId ? 'Edit Header' : 'Create New Header'}</DialogTitle>
+            <DialogDescription>
+              Headers help organize and group related questions visually.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="header-text">Header Text *</Label>
+              <Input
+                id="header-text"
+                value={headerForm.header_text}
+                onChange={(e) => setHeaderForm(prev => ({ ...prev, header_text: e.target.value }))}
+                placeholder="e.g., Medical Information, Emergency Contact, etc."
+                className="bg-white"
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Switch
+                id="header-active"
+                checked={headerForm.is_active}
+                onCheckedChange={(checked) => setHeaderForm(prev => ({ ...prev, is_active: checked }))}
+              />
+              <Label htmlFor="header-active" className="cursor-pointer">
+                Active (visible to applicants)
+              </Label>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsHeaderDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveHeader} disabled={saving || !headerForm.header_text}>
+              {saving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                'Save Header'
               )}
             </Button>
           </DialogFooter>

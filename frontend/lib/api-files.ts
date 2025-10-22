@@ -87,3 +87,48 @@ export async function deleteFile(token: string, fileId: string): Promise<void> {
   }
 }
 
+/**
+ * Upload a template file (super admin only)
+ */
+export async function uploadTemplateFile(
+  token: string,
+  file: File
+): Promise<FileUploadResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const response = await fetch(`${API_URL}/api/files/upload-template`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.detail || 'Template upload failed')
+  }
+
+  return response.json()
+}
+
+/**
+ * Get template file information and download URL
+ */
+export async function getTemplateFile(token: string, fileId: string): Promise<FileInfo> {
+  const response = await fetch(`${API_URL}/api/files/template/${fileId}`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
+  })
+
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.detail || 'Failed to get template file')
+  }
+
+  return response.json()
+}
+

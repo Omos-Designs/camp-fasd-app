@@ -10,6 +10,7 @@ export interface Question {
   question_text: string;
   question_type: 'text' | 'textarea' | 'dropdown' | 'multiple_choice' | 'file_upload' | 'profile_picture' | 'checkbox' | 'date' | 'email' | 'phone' | 'signature';
   help_text?: string;
+  description?: string;
   placeholder?: string;
   is_required: boolean;
   is_active: boolean;
@@ -26,8 +27,21 @@ export interface Question {
   };
   show_when_status?: string | null;
   template_file_id?: string | null;
+  template_filename?: string | null;
   show_if_question_id?: string | null;
   show_if_answer?: string | null;
+  detail_prompt_trigger?: string[] | null;
+  detail_prompt_text?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Header {
+  id: string;
+  section_id: string;
+  header_text: string;
+  order_index: number;
+  is_active: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -42,6 +56,7 @@ export interface Section {
   created_at: string;
   updated_at: string;
   questions: Question[];
+  headers: Header[];
 }
 
 export interface SectionCreate {
@@ -65,6 +80,7 @@ export interface QuestionCreate {
   question_text: string;
   question_type: string;
   help_text?: string;
+  description?: string;
   placeholder?: string;
   is_required?: boolean;
   is_active?: boolean;
@@ -73,12 +89,17 @@ export interface QuestionCreate {
   validation_rules?: any;
   show_when_status?: string | null;
   template_file_id?: string | null;
+  show_if_question_id?: string | null;
+  show_if_answer?: string | null;
+  detail_prompt_trigger?: string[] | null;
+  detail_prompt_text?: string | null;
 }
 
 export interface QuestionUpdate {
   question_text?: string;
   question_type?: string;
   help_text?: string;
+  description?: string;
   placeholder?: string;
   is_required?: boolean;
   is_active?: boolean;
@@ -87,6 +108,23 @@ export interface QuestionUpdate {
   validation_rules?: any;
   show_when_status?: string | null;
   template_file_id?: string | null;
+  show_if_question_id?: string | null;
+  show_if_answer?: string | null;
+  detail_prompt_trigger?: string[] | null;
+  detail_prompt_text?: string | null;
+}
+
+export interface HeaderCreate {
+  section_id: string;
+  header_text: string;
+  order_index: number;
+  is_active?: boolean;
+}
+
+export interface HeaderUpdate {
+  header_text?: string;
+  order_index?: number;
+  is_active?: boolean;
 }
 
 // Get all sections with questions
@@ -191,7 +229,8 @@ export async function createQuestion(token: string, question: QuestionCreate): P
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.detail || 'Failed to create question');
+    console.error('Create question error:', error);
+    throw new Error(JSON.stringify(error.detail) || 'Failed to create question');
   }
 
   return response.json();
@@ -210,7 +249,8 @@ export async function updateQuestion(token: string, questionId: string, question
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.detail || 'Failed to update question');
+    console.error('Update question error:', error);
+    throw new Error(JSON.stringify(error.detail) || 'Failed to update question');
   }
 
   return response.json();
@@ -262,5 +302,77 @@ export async function reorderQuestions(token: string, questionIds: string[]): Pr
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || 'Failed to reorder questions');
+  }
+}
+
+// Header API functions
+
+// Create a header
+export async function createHeader(token: string, header: HeaderCreate): Promise<Header> {
+  const response = await fetch(`${API_URL}/api/application-builder/headers`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify(header),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to create header');
+  }
+
+  return response.json();
+}
+
+// Update a header
+export async function updateHeader(token: string, headerId: string, header: HeaderUpdate): Promise<Header> {
+  const response = await fetch(`${API_URL}/api/application-builder/headers/${headerId}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify(header),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to update header');
+  }
+
+  return response.json();
+}
+
+// Delete a header
+export async function deleteHeader(token: string, headerId: string): Promise<void> {
+  const response = await fetch(`${API_URL}/api/application-builder/headers/${headerId}`, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to delete header');
+  }
+}
+
+// Reorder headers
+export async function reorderHeaders(token: string, headerIds: string[]): Promise<void> {
+  const response = await fetch(`${API_URL}/api/application-builder/headers/reorder`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify(headerIds),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to reorder headers');
   }
 }

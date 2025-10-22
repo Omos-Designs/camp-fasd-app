@@ -17,10 +17,16 @@ import {
   ApplicationProgress,
   ApplicationResponse
 } from '@/lib/api-applications'
-import { uploadFile, deleteFile, getFile, FileInfo } from '@/lib/api-files'
+import { uploadFile, deleteFile, getFile, getTemplateFile, FileInfo } from '@/lib/api-files'
+import { getMedicationsForQuestion, saveMedicationsForQuestion, getAllergiesForQuestion, saveAllergiesForQuestion } from '@/lib/api-medications'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import ProfileHeader from '@/components/ProfileHeader'
+import MedicationList, { Medication } from '@/components/MedicationList'
+import AllergyList, { Allergy } from '@/components/AllergyList'
+import GenericTable, { TableRow } from '@/components/GenericTable'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 export default function ApplicationWizardPage() {
   const params = useParams()
@@ -40,7 +46,12 @@ export default function ApplicationWizardPage() {
   const [error, setError] = useState<string>('')
   const [camperFirstName, setCamperFirstName] = useState<string>('')
   const [camperLastName, setCamperLastName] = useState<string>('')
+  const [camperSex, setCamperSex] = useState<string>('')
+  const [camperDateOfBirth, setCamperDateOfBirth] = useState<string>('')
   const [profilePictureUrl, setProfilePictureUrl] = useState<string>('')
+  const [medications, setMedications] = useState<Record<string, Medication[]>>({}) // questionId -> medications
+  const [allergies, setAllergies] = useState<Record<string, Allergy[]>>({}) // questionId -> allergies
+  const [tableData, setTableData] = useState<Record<string, TableRow[]>>({}) // questionId -> table rows
 
   // Load sections, progress, and existing responses
   useEffect(() => {
@@ -144,9 +155,53 @@ export default function ApplicationWizardPage() {
               setCamperLastName(response);
             }
 
+            // Look for sex (legal sex, not gender identity)
+            // Match "Legal Sex" exactly to avoid matching "sexual behavior" questions
+            if (question.question_text.toLowerCase() === 'legal sex' && response) {
+              setCamperSex(response);
+            }
+
+            // Look for date of birth
+            if (question.question_text.toLowerCase() === 'date of birth' && response) {
+              setCamperDateOfBirth(response);
+            }
+
             // Look for profile picture
             if (question.question_type === 'profile_picture' && filesMap[questionId]) {
               setProfilePictureUrl(filesMap[questionId].url);
+            }
+
+            // Load medications for medication_list questions
+            if (question.question_type === 'medication_list') {
+              getMedicationsForQuestion(applicationId, questionId).then(meds => {
+                setMedications(prev => ({ ...prev, [questionId]: meds }));
+              }).catch(err => {
+                console.error('Failed to load medications for question', questionId, err);
+                setMedications(prev => ({ ...prev, [questionId]: [] }));
+              });
+            }
+
+            // Load allergies for allergy_list questions
+            if (question.question_type === 'allergy_list') {
+              getAllergiesForQuestion(applicationId, questionId).then(allergyList => {
+                setAllergies(prev => ({ ...prev, [questionId]: allergyList }));
+              }).catch(err => {
+                console.error('Failed to load allergies for question', questionId, err);
+                setAllergies(prev => ({ ...prev, [questionId]: [] }));
+              });
+            }
+
+            // Load table data for table questions
+            if (question.question_type === 'table') {
+              try {
+                const tableDataValue = appResponses[questionId]
+                  ? JSON.parse(appResponses[questionId])
+                  : [];
+                setTableData(prev => ({ ...prev, [questionId]: tableDataValue }));
+              } catch (err) {
+                console.error('Failed to parse table data for question', questionId, err);
+                setTableData(prev => ({ ...prev, [questionId]: [] }));
+              }
             }
           });
         });
@@ -172,15 +227,60 @@ export default function ApplicationWizardPage() {
     return () => clearTimeout(timer)
   }, [responses, token])
 
+  // Autosave medications every 3 seconds
+  useEffect(() => {
+    if (!token || Object.keys(medications).length === 0) return
+
+    const timer = setTimeout(async () => {
+      await saveMedicationsData()
+    }, 3000)
+
+    return () => clearTimeout(timer)
+  }, [medications, token])
+
+  // Autosave allergies every 3 seconds
+  useEffect(() => {
+    if (!token || Object.keys(allergies).length === 0) return
+
+    const timer = setTimeout(async () => {
+      await saveAllergiesData()
+    }, 3000)
+
+    return () => clearTimeout(timer)
+  }, [allergies, token])
+
+  // Autosave table data every 3 seconds
+  useEffect(() => {
+    if (!token || Object.keys(tableData).length === 0) return
+
+    const timer = setTimeout(async () => {
+      await saveTableData()
+    }, 3000)
+
+    return () => clearTimeout(timer)
+  }, [tableData, token])
+
   const saveResponses = async () => {
     if (!token) return
 
     setSaving(true)
     try {
-      const responseArray: ApplicationResponse[] = Object.entries(responses).map(([questionId, value]) => ({
-        question_id: questionId,
-        response_value: value
-      }))
+      const responseArray: ApplicationResponse[] = Object.entries(responses).map(([questionId, value]) => {
+        // Check if this is a file upload response (value is a UUID/file_id)
+        const isFileUpload = uploadedFiles[questionId] !== undefined
+
+        if (isFileUpload) {
+          return {
+            question_id: questionId,
+            file_id: value
+          }
+        } else {
+          return {
+            question_id: questionId,
+            response_value: value
+          }
+        }
+      })
 
       await updateApplication(token, applicationId, {
         responses: responseArray
@@ -191,6 +291,78 @@ export default function ApplicationWizardPage() {
       setProgress(progressData)
     } catch (error) {
       console.error('Autosave failed:', error)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const saveMedicationsData = async () => {
+    if (!token) return
+
+    setSaving(true)
+    try {
+      // Save all medications for each question
+      const savePromises = Object.entries(medications).map(([questionId, meds]) =>
+        saveMedicationsForQuestion(applicationId, questionId, meds)
+      )
+
+      await Promise.all(savePromises)
+
+      // Refresh progress
+      const progressData = await getApplicationProgress(token, applicationId)
+      setProgress(progressData)
+    } catch (error) {
+      console.error('Medications autosave failed:', error)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const saveAllergiesData = async () => {
+    if (!token) return
+
+    setSaving(true)
+    try {
+      // Save all allergies for each question
+      const savePromises = Object.entries(allergies).map(([questionId, allergyList]) =>
+        saveAllergiesForQuestion(applicationId, questionId, allergyList)
+      )
+
+      await Promise.all(savePromises)
+
+      // Refresh progress
+      const progressData = await getApplicationProgress(token, applicationId)
+      setProgress(progressData)
+    } catch (error) {
+      console.error('Allergies autosave failed:', error)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const saveTableData = async () => {
+    if (!token) return
+
+    setSaving(true)
+    try {
+      // Save table data as JSON strings in responses
+      const tableResponses: Record<string, string> = {}
+      Object.entries(tableData).forEach(([questionId, rows]) => {
+        tableResponses[questionId] = JSON.stringify(rows)
+      })
+
+      // Merge with existing responses
+      const updatedResponses = { ...responses, ...tableResponses }
+
+      await updateApplication(token, applicationId, {
+        application_data: updatedResponses
+      })
+
+      // Refresh progress
+      const progressData = await getApplicationProgress(token, applicationId)
+      setProgress(progressData)
+    } catch (error) {
+      console.error('Table data autosave failed:', error)
     } finally {
       setSaving(false)
     }
@@ -324,6 +496,21 @@ export default function ApplicationWizardPage() {
 
     // Get the response to the trigger question
     const triggerResponse = responses[question.show_if_question_id];
+
+    // Debug logging for troubleshooting
+    console.log('shouldShowQuestion check:', {
+      questionText: question.question_text,
+      showIfQuestionId: question.show_if_question_id,
+      showIfAnswer: question.show_if_answer,
+      triggerResponse,
+      willShow: triggerResponse && triggerResponse !== '' && triggerResponse === question.show_if_answer
+    });
+
+    // Only show if trigger response exists AND matches expected answer
+    // This prevents conditional questions from showing before the trigger is answered
+    if (!triggerResponse || triggerResponse === '') {
+      return false;
+    }
 
     // Show if the trigger question has the expected answer
     return triggerResponse === question.show_if_answer;
@@ -520,10 +707,21 @@ export default function ApplicationWizardPage() {
                   firstName={camperFirstName}
                   lastName={camperLastName}
                   profilePictureUrl={profilePictureUrl}
+                  sex={camperSex}
+                  dateOfBirth={camperDateOfBirth}
                 />
 
                 {currentSection?.questions.filter(shouldShowQuestion).map((question, qIndex) => (
                   <div key={question.id} className="pb-6 sm:pb-8 border-b border-gray-200 last:border-0">
+                    {/* Section Header - Appears before question if header_text is set */}
+                    {question.header_text && (
+                      <div className="mb-6 pb-3 border-b-2 border-camp-green/30">
+                        <h3 className="text-xl sm:text-2xl font-bold text-camp-charcoal">
+                          {question.header_text}
+                        </h3>
+                      </div>
+                    )}
+
                     <label className="block text-sm sm:text-base font-medium text-camp-charcoal mb-3">
                       {qIndex + 1}. {question.question_text}
                       {question.is_required && (
@@ -535,6 +733,14 @@ export default function ApplicationWizardPage() {
                       <p className="text-sm text-gray-600 mb-4">
                         {question.help_text}
                       </p>
+                    )}
+
+                    {question.description && (
+                      <div className="prose prose-sm max-w-none mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {question.description}
+                        </ReactMarkdown>
+                      </div>
                     )}
 
                     {/* Render different input types */}
@@ -561,17 +767,38 @@ export default function ApplicationWizardPage() {
                     )}
 
                     {question.question_type === 'dropdown' && question.options && (
-                      <select
-                        value={responses[question.id] || ''}
-                        onChange={(e) => handleResponseChange(question.id, e.target.value)}
-                        className="w-full min-h-[48px] px-4 py-3 text-base border-2 border-gray-300 rounded-lg focus:border-camp-green focus:ring-2 focus:ring-camp-green/20 transition-colors"
-                        required={question.is_required}
-                      >
-                        <option value="">Select an option...</option>
-                        {Array.isArray(question.options) && question.options.map((option: string, i: number) => (
-                          <option key={i} value={option}>{option}</option>
-                        ))}
-                      </select>
+                      <>
+                        <select
+                          value={responses[question.id] || ''}
+                          onChange={(e) => handleResponseChange(question.id, e.target.value)}
+                          className="w-full min-h-[48px] px-4 py-3 text-base border-2 border-gray-300 rounded-lg focus:border-camp-green focus:ring-2 focus:ring-camp-green/20 transition-colors"
+                          required={question.is_required}
+                        >
+                          <option value="">Select an option...</option>
+                          {Array.isArray(question.options) && question.options.map((option: string, i: number) => (
+                            <option key={i} value={option}>{option}</option>
+                          ))}
+                        </select>
+
+                        {/* Detail Prompt - Show textarea when specific answer is selected */}
+                        {question.detail_prompt_trigger &&
+                         question.detail_prompt_text &&
+                         Array.isArray(question.detail_prompt_trigger) &&
+                         question.detail_prompt_trigger.includes(responses[question.id]) && (
+                          <div className="mt-4 p-4 bg-blue-50 border-2 border-blue-200 rounded-lg">
+                            <label className="block text-sm font-medium text-blue-900 mb-2">
+                              {question.detail_prompt_text}
+                            </label>
+                            <textarea
+                              value={responses[`${question.id}_detail`] || ''}
+                              onChange={(e) => handleResponseChange(`${question.id}_detail`, e.target.value)}
+                              rows={4}
+                              className="w-full px-4 py-3 text-base border-2 border-blue-300 rounded-lg focus:border-camp-green focus:ring-2 focus:ring-camp-green/20 transition-colors resize-y"
+                              placeholder="Please provide details..."
+                            />
+                          </div>
+                        )}
+                      </>
                     )}
 
                     {question.question_type === 'email' && (
@@ -606,17 +833,97 @@ export default function ApplicationWizardPage() {
                       />
                     )}
 
-                    {question.question_type === 'checkbox' && (
-                      <label className="flex items-center space-x-3 cursor-pointer min-h-[48px]">
-                        <input
-                          type="checkbox"
-                          checked={responses[question.id] === 'true'}
-                          onChange={(e) => handleResponseChange(question.id, e.target.checked.toString())}
-                          className="w-6 h-6 rounded border-gray-300 text-camp-green focus:ring-camp-green"
-                          required={question.is_required}
-                        />
-                        <span className="text-sm sm:text-base text-gray-700">I agree/confirm</span>
-                      </label>
+                    {question.question_type === 'multiple_choice' && question.options && (
+                      <>
+                        <div className="space-y-3">
+                          {Array.isArray(question.options) && question.options.map((option: string, i: number) => (
+                            <label key={i} className="flex items-center space-x-3 cursor-pointer p-3 border-2 border-gray-300 rounded-lg hover:border-camp-green hover:bg-camp-green/5 transition-colors">
+                              <input
+                                type="radio"
+                                name={`question-${question.id}`}
+                                value={option}
+                                checked={responses[question.id] === option}
+                                onChange={(e) => handleResponseChange(question.id, e.target.value)}
+                                className="w-5 h-5 text-camp-green focus:ring-camp-green border-gray-300"
+                                required={question.is_required}
+                              />
+                              <span className="text-sm sm:text-base text-gray-700 flex-1">{option}</span>
+                            </label>
+                          ))}
+                        </div>
+
+                        {/* Detail Prompt - Show textarea when specific answer is selected */}
+                        {question.detail_prompt_trigger &&
+                         question.detail_prompt_text &&
+                         Array.isArray(question.detail_prompt_trigger) &&
+                         question.detail_prompt_trigger.includes(responses[question.id]) && (
+                          <div className="mt-4 p-4 bg-blue-50 border-2 border-blue-200 rounded-lg">
+                            <label className="block text-sm font-medium text-blue-900 mb-2">
+                              {question.detail_prompt_text}
+                            </label>
+                            <textarea
+                              value={responses[`${question.id}_detail`] || ''}
+                              onChange={(e) => handleResponseChange(`${question.id}_detail`, e.target.value)}
+                              rows={4}
+                              className="w-full px-4 py-3 text-base border-2 border-blue-300 rounded-lg focus:border-camp-green focus:ring-2 focus:ring-camp-green/20 transition-colors resize-y"
+                              placeholder="Please provide details..."
+                            />
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {question.question_type === 'checkbox' && question.options && (
+                      <>
+                        <div className="space-y-2">
+                          {Array.isArray(question.options) && question.options.map((option: string, i: number) => {
+                            const selectedOptions = responses[question.id] ? responses[question.id].split(',') : [];
+                            const isChecked = selectedOptions.includes(option);
+
+                            return (
+                              <label key={i} className="flex items-start space-x-3 cursor-pointer p-3 hover:bg-gray-50 rounded-lg transition-colors">
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={(e) => {
+                                    const currentSelected = responses[question.id] ? responses[question.id].split(',').filter(v => v) : [];
+                                    let newSelected;
+                                    if (e.target.checked) {
+                                      newSelected = [...currentSelected, option];
+                                    } else {
+                                      newSelected = currentSelected.filter(v => v !== option);
+                                    }
+                                    handleResponseChange(question.id, newSelected.join(','));
+                                  }}
+                                  className="mt-1 w-5 h-5 rounded border-gray-300 text-camp-green focus:ring-camp-green flex-shrink-0"
+                                />
+                                <span className="text-sm sm:text-base text-gray-700 flex-1">{option}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+
+                        {/* Detail Prompt - Show textarea when specific options are selected */}
+                        {question.detail_prompt_trigger &&
+                         question.detail_prompt_text &&
+                         Array.isArray(question.detail_prompt_trigger) &&
+                         question.detail_prompt_trigger.some((trigger: string) =>
+                           responses[question.id]?.split(',').includes(trigger)
+                         ) && (
+                          <div className="mt-4 p-4 bg-blue-50 border-2 border-blue-200 rounded-lg">
+                            <label className="block text-sm font-medium text-blue-900 mb-2">
+                              {question.detail_prompt_text}
+                            </label>
+                            <textarea
+                              value={responses[`${question.id}_detail`] || ''}
+                              onChange={(e) => handleResponseChange(`${question.id}_detail`, e.target.value)}
+                              rows={4}
+                              className="w-full px-4 py-3 text-base border-2 border-blue-300 rounded-lg focus:border-camp-green focus:ring-2 focus:ring-camp-green/20 transition-colors resize-y"
+                              placeholder="Please provide details..."
+                            />
+                          </div>
+                        )}
+                      </>
                     )}
 
                     {question.question_type === 'signature' && (
@@ -636,6 +943,41 @@ export default function ApplicationWizardPage() {
 
                     {question.question_type === 'file_upload' && (
                       <div className="space-y-4">
+                        {/* Template file download button */}
+                        {question.template_file_id && (
+                          <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-4">
+                            <div className="flex items-center gap-3">
+                              <svg className="h-6 w-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                              </svg>
+                              <div className="flex-1">
+                                <p className="text-sm font-medium text-blue-900">
+                                  Download Template
+                                </p>
+                                <p className="text-xs text-blue-700">
+                                  Download, complete, and upload the form using the button below
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  if (!token) return
+                                  try {
+                                    const templateFile = await getTemplateFile(token, question.template_file_id!)
+                                    window.open(templateFile.url, '_blank')
+                                  } catch (error) {
+                                    console.error('Failed to download template:', error)
+                                    alert('Failed to download template file')
+                                  }
+                                }}
+                                className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 transition-colors"
+                              >
+                                Download
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
                         {uploadedFiles[question.id] ? (
                           // Show uploaded file
                           <div className="border-2 border-camp-green rounded-lg p-4 bg-green-50">
@@ -720,6 +1062,51 @@ export default function ApplicationWizardPage() {
                           </div>
                         )}
                       </div>
+                    )}
+
+                    {/* Medication List */}
+                    {question.question_type === 'medication_list' && (
+                      <MedicationList
+                        questionId={question.id}
+                        applicationId={applicationId}
+                        value={medications[question.id] || []}
+                        onChange={(meds) => {
+                          setMedications(prev => ({ ...prev, [question.id]: meds }))
+                        }}
+                        medicationFields={question.options?.medication_fields}
+                        doseFields={question.options?.dose_fields}
+                        isRequired={question.is_required}
+                      />
+                    )}
+
+                    {/* Allergy List */}
+                    {question.question_type === 'allergy_list' && (
+                      <AllergyList
+                        questionId={question.id}
+                        applicationId={applicationId}
+                        value={allergies[question.id] || []}
+                        onChange={(allergyList) => {
+                          setAllergies(prev => ({ ...prev, [question.id]: allergyList }))
+                        }}
+                        allergyFields={question.options?.allergy_fields}
+                        isRequired={question.is_required}
+                      />
+                    )}
+
+                    {/* Generic Table */}
+                    {question.question_type === 'table' && (
+                      <GenericTable
+                        questionId={question.id}
+                        applicationId={applicationId}
+                        value={tableData[question.id] || []}
+                        onChange={(rows) => {
+                          setTableData(prev => ({ ...prev, [question.id]: rows }))
+                        }}
+                        columns={question.options?.columns || []}
+                        addButtonText={question.options?.addButtonText}
+                        emptyStateText={question.options?.emptyStateText}
+                        isRequired={question.is_required}
+                      />
                     )}
 
                     {/* Profile Picture Upload - Image-focused */}

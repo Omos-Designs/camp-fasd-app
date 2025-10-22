@@ -28,8 +28,14 @@ export interface ApplicationQuestion {
   order_index: number
   validation_rules: any[] | Record<string, any> | null  // Can be array or object
   help_text: string | null
+  description: string | null
   placeholder: string | null
   is_active: boolean
+  show_if_question_id?: string | null
+  show_if_answer?: string | null
+  detail_prompt_trigger?: string[] | null
+  detail_prompt_text?: string | null
+  header_text?: string | null
   created_at: string
   updated_at: string
 }
