@@ -152,7 +152,7 @@ export default function Home() {
           </div>
 
           {/* Admin Info */}
-          <div className="mt-8 bg-blue-50 border border-blue-200 rounded-lg p-6">
+          {/* <div className="mt-8 bg-blue-50 border border-blue-200 rounded-lg p-6">
             <h4 className="font-semibold text-blue-900 mb-2">👤 Super Admin Account</h4>
             <p className="text-blue-800 text-sm">
               <strong>Email:</strong> yianni@fasdcamp.org<br />
@@ -161,7 +161,7 @@ export default function Home() {
                 (Login page will be available once authentication is implemented)
               </span>
             </p>
-          </div>
+          </div> */}
         </div>
       </div>
 
