@@ -5,11 +5,11 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/contexts/AuthContext'
-import { getApplicationAdmin, updateApplicationAdmin } from '@/lib/api-admin'
-import { getApplicationSections, ApplicationSection } from '@/lib/api-applications'
+import { getApplicationAdmin, updateApplicationAdmin, getApplicationProgressAdmin } from '@/lib/api-admin'
+import { getApplicationSections, ApplicationSection, ApplicationProgress, SectionProgress } from '@/lib/api-applications'
 import { getFile, FileInfo } from '@/lib/api-files'
 import { getAdminNotes, createAdminNote, approveApplication, declineApplication, getApprovalStatus, AdminNote } from '@/lib/api-admin-actions'
 import { Button } from '@/components/ui/button'
@@ -44,6 +44,7 @@ export default function AdminApplicationDetailPage() {
 
   const [application, setApplication] = useState<ApplicationData | null>(null)
   const [sections, setSections] = useState<ApplicationSection[]>([])
+  const [progress, setProgress] = useState<ApplicationProgress | null>(null)
   const [files, setFiles] = useState<Record<string, FileInfo>>({})
   const [fileErrors, setFileErrors] = useState<Record<string, string>>({})
   const [notes, setNotes] = useState<AdminNote[]>([])
@@ -62,6 +63,8 @@ export default function AdminApplicationDetailPage() {
   const [editingQuestion, setEditingQuestion] = useState<string | null>(null)
   const [editValue, setEditValue] = useState<string>('')
   const [saving, setSaving] = useState(false)
+  const [activeSectionId, setActiveSectionId] = useState<string | null>(null)
+  const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
   // Check if user is admin
   useEffect(() => {
@@ -80,9 +83,10 @@ export default function AdminApplicationDetailPage() {
         setLoading(true)
         setError('')
 
-        const [appData, sectionsData] = await Promise.all([
+        const [appData, sectionsData, progressData] = await Promise.all([
           getApplicationAdmin(token, applicationId),
-          getApplicationSections(token)
+          getApplicationSections(token, applicationId),
+          getApplicationProgressAdmin(token, applicationId)
         ])
 
         console.log('Application data:', appData)
@@ -90,6 +94,7 @@ export default function AdminApplicationDetailPage() {
 
         setApplication(appData)
         setSections(sectionsData)
+        setProgress(progressData)
 
         // Load file information for responses with file_id
         const filesMap: Record<string, FileInfo> = {}
@@ -419,6 +424,18 @@ export default function AdminApplicationDetailPage() {
     router.push('/login')
   }
 
+  const scrollToSection = (sectionId: string) => {
+    const element = sectionRefs.current[sectionId]
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setActiveSectionId(sectionId)
+    }
+  }
+
+  const getSectionProgress = (sectionId: string): SectionProgress | undefined => {
+    return progress?.section_progress.find(sp => sp.section_id === sectionId)
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
       {/* Header */}
@@ -469,10 +486,60 @@ export default function AdminApplicationDetailPage() {
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Application Info */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+      {/* Main Content with Sidebar */}
+      <div className="flex">
+        {/* Left Sidebar - Section Progress */}
+        <aside className="w-64 bg-white border-r border-gray-200 sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto">
+          <div className="p-4">
+            <h3 className="text-sm font-semibold text-camp-charcoal mb-4">Sections</h3>
+            <div className="space-y-2">
+              {sections.map((section, idx) => {
+                const sectionProg = getSectionProgress(section.id)
+                const isActive = activeSectionId === section.id
+                return (
+                  <button
+                    key={section.id}
+                    onClick={() => scrollToSection(section.id)}
+                    className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${
+                      isActive
+                        ? 'bg-camp-green text-white'
+                        : 'hover:bg-gray-100 text-gray-700'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-xs font-medium truncate ${isActive ? 'text-white' : 'text-gray-900'}`}>
+                          {idx + 1}. {section.title}
+                        </p>
+                        {sectionProg && (
+                          <p className={`text-xs mt-1 ${isActive ? 'text-white/90' : 'text-gray-500'}`}>
+                            {sectionProg.answered_required}/{sectionProg.required_questions} required
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex-shrink-0">
+                        {sectionProg?.is_complete ? (
+                          <svg className={`w-5 h-5 ${isActive ? 'text-white' : 'text-green-600'}`} fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                          </svg>
+                        ) : sectionProg ? (
+                          <div className={`text-xs font-semibold ${isActive ? 'text-white' : 'text-camp-orange'}`}>
+                            {sectionProg.completion_percentage}%
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </aside>
+
+        {/* Main Content Area */}
+        <main className="flex-1 px-4 sm:px-6 lg:px-8 py-8">
+          {/* Application Info */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Status</CardTitle>
@@ -517,54 +584,70 @@ export default function AdminApplicationDetailPage() {
           </Card>
         </div>
 
-        {/* Application Responses */}
+        {/* Application Responses - Show ALL sections */}
         <div className="space-y-6">
           {sections.map((section, sectionIndex) => {
-            const sectionResponses = section.questions.map(q => ({
-              question: q,
-              value: getResponseValue(q.id)
-            })).filter(r => r.value !== null)
-
-            if (sectionResponses.length === 0) return null
+            const sectionProg = getSectionProgress(section.id)
 
             return (
-              <Card key={section.id}>
+              <Card
+                key={section.id}
+                ref={(el) => { sectionRefs.current[section.id] = el }}
+                className="scroll-mt-20"
+              >
                 <CardHeader>
-                  <CardTitle>
-                    {sectionIndex + 1}. {section.title}
-                  </CardTitle>
-                  {section.description && (
-                    <CardDescription>{section.description}</CardDescription>
-                  )}
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <CardTitle className="flex items-center gap-2">
+                        {sectionIndex + 1}. {section.title}
+                        {sectionProg?.is_complete && (
+                          <svg className="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                      </CardTitle>
+                      {section.description && (
+                        <CardDescription>{section.description}</CardDescription>
+                      )}
+                      {sectionProg && (
+                        <div className="mt-2 flex items-center gap-4 text-sm text-gray-600">
+                          <span>{sectionProg.answered_questions}/{sectionProg.total_questions} answered</span>
+                          <span className="font-semibold text-camp-green">{sectionProg.completion_percentage}% complete</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-6">
-                    {section.questions.map((question, qIndex) => {
-                      const value = getResponseValue(question.id)
-                      if (value === null) return null
+                    {section.questions.length === 0 ? (
+                      <p className="text-gray-500 italic">No questions in this section</p>
+                    ) : (
+                      section.questions.map((question, qIndex) => {
+                        const value = getResponseValue(question.id)
 
-                      return (
-                        <div key={question.id} className="pb-6 border-b border-gray-100 last:border-0">
-                          <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-4">
-                            <div className="sm:w-1/3">
-                              <p className="font-medium text-gray-700">
-                                {qIndex + 1}. {question.question_text}
-                                {question.is_required && (
-                                  <span className="text-camp-orange ml-1">*</span>
-                                )}
-                              </p>
-                              {question.help_text && (
-                                <p className="text-sm text-gray-500 mt-1">
-                                  {question.help_text}
+                        return (
+                          <div key={question.id} className="pb-6 border-b border-gray-100 last:border-0">
+                            <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-4">
+                              <div className="sm:w-1/3">
+                                <p className="font-medium text-gray-700">
+                                  {qIndex + 1}. {question.question_text}
+                                  {question.is_required && (
+                                    <span className="text-camp-orange ml-1">*</span>
+                                  )}
                                 </p>
-                              )}
-                            </div>
-                            <div className="sm:w-2/3">
-                              {editingQuestion === question.id ? (
-                                <div className="space-y-2">
-                                  <textarea
-                                    value={editValue}
-                                    onChange={(e) => setEditValue(e.target.value)}
+                                {question.help_text && (
+                                  <p className="text-sm text-gray-500 mt-1">
+                                    {question.help_text}
+                                  </p>
+                                )}
+                              </div>
+                              <div className="sm:w-2/3">
+                                {editingQuestion === question.id ? (
+                                  <div className="space-y-2">
+                                    <textarea
+                                      value={editValue}
+                                      onChange={(e) => setEditValue(e.target.value)}
                                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-camp-green focus:border-transparent resize-none"
                                     rows={3}
                                     disabled={saving}
@@ -608,7 +691,8 @@ export default function AdminApplicationDetailPage() {
                           </div>
                         </div>
                       )
-                    })}
+                      })
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -829,7 +913,8 @@ export default function AdminApplicationDetailPage() {
             </div>
           </CardContent>
         </Card>
-      </main>
+        </main>
+      </div>
     </div>
   )
 }

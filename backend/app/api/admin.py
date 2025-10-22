@@ -12,9 +12,151 @@ from app.core.deps import get_current_admin_user
 from app.models.user import User
 from app.models.application import Application, AdminNote, ApplicationApproval, ApplicationResponse
 from app.schemas.admin_note import AdminNote as AdminNoteSchema, AdminNoteCreate
-from app.schemas.application import ApplicationUpdate, Application as ApplicationSchema
+from app.schemas.application import ApplicationUpdate, Application as ApplicationSchema, ApplicationProgress
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+@router.get("/applications/{application_id}/progress", response_model=ApplicationProgress)
+async def get_application_progress_admin(
+    application_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    """
+    Get detailed progress for an application (admin version)
+
+    Returns completion status for each section and overall progress.
+    Admin can view progress for any application.
+    """
+    # Import here to avoid circular dependency
+    from app.api.applications import (
+        ApplicationSection,
+        ApplicationQuestion,
+        ApplicationResponse as AppResponse,
+        SectionProgress
+    )
+
+    application = db.query(Application).filter(Application.id == application_id).first()
+    if not application:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Application not found"
+        )
+
+    # Get application status for conditional filtering
+    app_status = application.status
+
+    # Get sections filtered by status
+    sections_query = db.query(ApplicationSection).filter(
+        ApplicationSection.is_active == True
+    )
+
+    # Filter sections by status
+    if app_status:
+        sections_query = sections_query.filter(
+            (ApplicationSection.show_when_status == None) |
+            (ApplicationSection.show_when_status == app_status)
+        )
+    else:
+        sections_query = sections_query.filter(
+            ApplicationSection.show_when_status == None
+        )
+
+    sections = sections_query.order_by(ApplicationSection.order_index).all()
+
+    # Get all responses for this application
+    all_responses = db.query(AppResponse).filter(
+        AppResponse.application_id == application_id
+    ).all()
+
+    # Create a dict of question_id -> response_value for quick lookup
+    response_dict = {str(r.question_id): r.response_value for r in all_responses}
+
+    # Helper function to check if a question should be shown based on conditional logic
+    def should_show_question(question: ApplicationQuestion) -> bool:
+        # If no conditional logic, always show
+        if not question.show_if_question_id or not question.show_if_answer:
+            return True
+
+        # Get the trigger question's response
+        trigger_response = response_dict.get(str(question.show_if_question_id))
+
+        # Show the question only if the trigger response matches the expected answer
+        return trigger_response == question.show_if_answer
+
+    section_progress_list = []
+    completed_sections = 0
+
+    for section in sections:
+        # Get questions for this section, filtered by status
+        questions_query = db.query(ApplicationQuestion).filter(
+            ApplicationQuestion.section_id == section.id,
+            ApplicationQuestion.is_active == True
+        )
+
+        # Filter questions by status
+        if app_status:
+            questions_query = questions_query.filter(
+                (ApplicationQuestion.show_when_status == None) |
+                (ApplicationQuestion.show_when_status == app_status)
+            )
+        else:
+            questions_query = questions_query.filter(
+                ApplicationQuestion.show_when_status == None
+            )
+
+        questions = questions_query.all()
+
+        # Filter questions by conditional logic
+        visible_questions = [q for q in questions if should_show_question(q)]
+
+        total_questions = len(visible_questions)
+        required_questions = sum(1 for q in visible_questions if q.is_required)
+
+        # Get responses for visible questions only
+        visible_question_ids = [q.id for q in visible_questions]
+        responses = [r for r in all_responses if r.question_id in visible_question_ids]
+
+        answered_questions = len(responses)
+        answered_required = sum(
+            1 for r in responses
+            if any(q.id == r.question_id and q.is_required for q in visible_questions)
+        )
+
+        # Calculate section completion
+        if required_questions > 0:
+            section_percentage = int((answered_required / required_questions) * 100)
+        else:
+            section_percentage = 100 if answered_questions == total_questions else 0
+
+        is_complete = answered_required == required_questions
+
+        if is_complete:
+            completed_sections += 1
+
+        section_progress_list.append(SectionProgress(
+            section_id=section.id,
+            section_title=section.title,
+            total_questions=total_questions,
+            required_questions=required_questions,
+            answered_questions=answered_questions,
+            answered_required=answered_required,
+            completion_percentage=section_percentage,
+            is_complete=is_complete
+        ))
+
+    # Calculate overall percentage
+    total_sections = len(sections)
+    overall_percentage = int((completed_sections / total_sections) * 100) if total_sections > 0 else 0
+
+    return ApplicationProgress(
+        application_id=application.id,
+        total_sections=total_sections,
+        completed_sections=completed_sections,
+        overall_percentage=overall_percentage,
+        section_progress=section_progress_list
+    )
 
 
 @router.get("/applications/{application_id}/approval-status")

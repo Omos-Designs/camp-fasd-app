@@ -117,3 +117,24 @@ export async function updateApplicationAdmin(
 
   return response.json()
 }
+
+/**
+ * Get application progress (admin only)
+ */
+export async function getApplicationProgressAdmin(
+  token: string,
+  applicationId: string
+): Promise<import('./api-applications').ApplicationProgress> {
+  const response = await fetch(`${API_URL}/api/admin/applications/${applicationId}/progress`, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}))
+    throw new Error(error.detail || 'Failed to fetch application progress')
+  }
+
+  return response.json()
+}
