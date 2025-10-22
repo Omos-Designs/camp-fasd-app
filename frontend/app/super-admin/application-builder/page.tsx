@@ -1365,13 +1365,13 @@ export default function ApplicationBuilderPage() {
                   const updatedForm: any = { ...questionForm, question_type: value };
 
                   // Initialize default field configurations for medication and allergy lists
-                  if (value === 'medication_list' && !questionForm.options?.medication_fields) {
+                  if (value === 'medication_list' && !(questionForm.options as any)?.medication_fields) {
                     updatedForm.options = {
                       ...questionForm.options,
                       medication_fields: DEFAULT_MEDICATION_FIELDS,
                       dose_fields: DEFAULT_DOSE_FIELDS
                     };
-                  } else if (value === 'allergy_list' && !questionForm.options?.allergy_fields) {
+                  } else if (value === 'allergy_list' && !(questionForm.options as any)?.allergy_fields) {
                     updatedForm.options = {
                       ...questionForm.options,
                       allergy_fields: DEFAULT_ALLERGY_FIELDS
@@ -1482,7 +1482,7 @@ export default function ApplicationBuilderPage() {
               <div className="space-y-2">
                 <Label>Options</Label>
                 <div className="space-y-2">
-                  {questionForm.options?.map((option, index) => (
+                  {questionForm.options?. questionForm.options as any)?.map((option, index) => (
                     <div key={index} className="flex gap-2">
                       <Input
                         value={option}
@@ -1696,7 +1696,7 @@ export default function ApplicationBuilderPage() {
 
                 <FieldConfigurator
                   title="Medication Information Fields"
-                  fields={questionForm.options?.medication_fields || DEFAULT_MEDICATION_FIELDS}
+                  fields={questionForm.options?. questionForm.options as any)?.medication_fields || DEFAULT_MEDICATION_FIELDS}
                   onChange={(fields) => setQuestionForm(prev => ({
                     ...prev,
                     options: { ...prev.options, medication_fields: fields }
@@ -1707,7 +1707,7 @@ export default function ApplicationBuilderPage() {
 
                 <FieldConfigurator
                   title="Dose Schedule Fields"
-                  fields={questionForm.options?.dose_fields || DEFAULT_DOSE_FIELDS}
+                  fields={questionForm.options?. questionForm.options as any)?.dose_fields || DEFAULT_DOSE_FIELDS}
                   onChange={(fields) => setQuestionForm(prev => ({
                     ...prev,
                     options: { ...prev.options, dose_fields: fields }
@@ -1728,7 +1728,7 @@ export default function ApplicationBuilderPage() {
 
                 <FieldConfigurator
                   title="Allergy Information Fields"
-                  fields={questionForm.options?.allergy_fields || DEFAULT_ALLERGY_FIELDS}
+                  fields={questionForm.options?. questionForm.options as any)?.allergy_fields || DEFAULT_ALLERGY_FIELDS}
                   onChange={(fields) => setQuestionForm(prev => ({
                     ...prev,
                     options: { ...prev.options, allergy_fields: fields }
@@ -1752,7 +1752,7 @@ export default function ApplicationBuilderPage() {
                     <Label htmlFor="addButtonText">Add Button Text</Label>
                     <Input
                       id="addButtonText"
-                      value={questionForm.options?.addButtonText || 'Add Row'}
+                      value={questionForm.options?. questionForm.options as any)?.addButtonText || 'Add Row'}
                       onChange={(e) => setQuestionForm(prev => ({
                         ...prev,
                         options: { ...prev.options, addButtonText: e.target.value }
@@ -1765,7 +1765,7 @@ export default function ApplicationBuilderPage() {
                     <Label htmlFor="emptyStateText">Empty State Message</Label>
                     <Input
                       id="emptyStateText"
-                      value={questionForm.options?.emptyStateText || ''}
+                      value={questionForm.options?. questionForm.options as any)?.emptyStateText || ''}
                       onChange={(e) => setQuestionForm(prev => ({
                         ...prev,
                         options: { ...prev.options, emptyStateText: e.target.value }
@@ -1777,7 +1777,7 @@ export default function ApplicationBuilderPage() {
 
                 <FieldConfigurator
                   title="Table Columns"
-                  fields={questionForm.options?.columns || []}
+                  fields={questionForm.options?. questionForm.options as any)?.columns || []}
                   onChange={(fields) => setQuestionForm(prev => ({
                     ...prev,
                     options: { ...prev.options, columns: fields }

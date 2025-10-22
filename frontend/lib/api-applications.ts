@@ -30,6 +30,7 @@ export interface ApplicationQuestion {
   help_text: string | null
   description: string | null
   placeholder: string | null
+  template_file_id?: string | null
   is_active: boolean
   show_if_question_id?: string | null
   show_if_answer?: string | null

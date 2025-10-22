@@ -373,11 +373,16 @@ export default function ApplicationWizardPage() {
         tableResponses[questionId] = JSON.stringify(rows)
       })
 
-      // Merge with existing responses
+      // Merge with existing responses and convert to array format
       const updatedResponses = { ...responses, ...tableResponses }
 
+      const responseArray: ApplicationResponse[] = Object.entries(updatedResponses).map(([questionId, value]) => ({
+        question_id: questionId,
+        response_value: value
+      }))
+
       await updateApplication(token, applicationId, {
-        application_data: updatedResponses
+        responses: responseArray
       })
 
       // Refresh progress
@@ -1095,8 +1100,8 @@ export default function ApplicationWizardPage() {
                         onChange={(meds) => {
                           setMedications(prev => ({ ...prev, [question.id]: meds }))
                         }}
-                        medicationFields={question.options?.medication_fields}
-                        doseFields={question.options?.dose_fields}
+                        medicationFields={(question.options as any)?.medication_fields}
+                        doseFields={(question.options as any)?.dose_fields}
                         isRequired={question.is_required}
                       />
                     )}
@@ -1110,7 +1115,7 @@ export default function ApplicationWizardPage() {
                         onChange={(allergyList) => {
                           setAllergies(prev => ({ ...prev, [question.id]: allergyList }))
                         }}
-                        allergyFields={question.options?.allergy_fields}
+                        allergyFields={(question.options as any)?.allergy_fields}
                         isRequired={question.is_required}
                       />
                     )}
@@ -1124,9 +1129,9 @@ export default function ApplicationWizardPage() {
                         onChange={(rows) => {
                           setTableData(prev => ({ ...prev, [question.id]: rows }))
                         }}
-                        columns={question.options?.columns || []}
-                        addButtonText={question.options?.addButtonText}
-                        emptyStateText={question.options?.emptyStateText}
+                        columns={(question.options as any)?.columns || []}
+                        addButtonText={(question.options as any)?.addButtonText}
+                        emptyStateText={(question.options as any)?.emptyStateText}
                         isRequired={question.is_required}
                       />
                     )}
