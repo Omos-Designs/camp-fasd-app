@@ -216,8 +216,8 @@ export default function ApplicationWizardPage() {
             // Load table data for table questions
             if (question.question_type === 'table') {
               try {
-                const tableDataValue = appResponses[questionId]
-                  ? JSON.parse(appResponses[questionId])
+                const tableDataValue = responsesMap[questionId]
+                  ? JSON.parse(responsesMap[questionId])
                   : [];
                 setTableData(prev => ({ ...prev, [questionId]: tableDataValue }));
               } catch (err) {
