@@ -44,12 +44,13 @@ class Settings(BaseSettings):
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB
     ALLOWED_FILE_TYPES: List[str] = [".pdf", ".docx", ".doc", ".jpg", ".jpeg", ".png"]
 
-    # CORS
-    ALLOWED_ORIGINS: List[str] = [
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "https://camp-fasd.vercel.app"
-    ]
+    # CORS - Can be overridden by ALLOWED_ORIGINS env variable (comma-separated)
+    ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:3001,https://camp-fasd.vercel.app"
+
+    @property
+    def allowed_origins_list(self) -> List[str]:
+        """Parse ALLOWED_ORIGINS into a list"""
+        return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",")]
 
     # Email Configuration
     EMAIL_REMINDER_INTERVALS: List[int] = [60, 80]  # Completion percentages
